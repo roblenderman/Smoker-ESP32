@@ -1,6 +1,7 @@
 #include <Arduino.h>
-#include <max6675.h>
 #include <WiFi.h>
+#include <Wire.h>
+#include <max6675.h>
 #include <LiquidCrystal_I2C.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
@@ -16,7 +17,7 @@ int thermoDO = 19;  // MISO
 MAX6675 thermocouple(thermoCLK, thermoCS, thermoDO);
 
 // I2C LCD (20x4)
-LiquidCrystal_I2C lcd(0x27, 20, 4); // Adjust I2C address if needed
+LiquidCrystal_I2C lcd(0x27, 20, 4); // I2C address 0x27, 20x4 LCD
 
 // Relay (SLA-05VDC-SL-C, low-level trigger)
 const int relayPin = 16;
@@ -25,7 +26,7 @@ const int relayPin = 16;
 const int thermistorPin1 = 32; // ADC1
 const float R_FIXED1 = 10000.0; // 10kΩ
 const float V_IN = 3.3; // 3.3V
-const float R_25 = 120000.0; // 120kΩ at 25°C
+const float R_25 = 110000.0; // 110kΩ at 25°C
 const float BETA = 3950.0; // Adjust if known
 
 // Voltage Divider (Thermistor 2)
@@ -33,11 +34,12 @@ const int thermistorPin2 = 33; // ADC1
 const float R_FIXED2 = 10000.0; // 10kΩ
 
 // Buttons
-const int button1Pin = 36; // Increase smokerTemp
-const int button2Pin = 39; // Decrease smokerTemp
+const int button1Pin = 36; // Increase smokerTemp or meatDoneTemp
+const int button2Pin = 39; // Decrease smokerTemp or meatDoneTemp
 
-// Smoker setpoint
+// Smoker and meat setpoints
 float smokerTemp = 200.0; // °F, initial setpoint
+float meatDoneTemp = 165.0; // °F, initial meat done temp
 const float SMOKER_TEMP_MIN = 150.0; // °F
 const float SMOKER_TEMP_MAX = 350.0; // °F
 const float TEMP_STEP = 5.0; // °F increment
@@ -54,10 +56,14 @@ bool relayState = false;
 
 // Button hold-to-adjust
 const unsigned long REPEAT_DELAY = 200; // ms between adjustments
+const unsigned long MODE_TIMEOUT = 5000; // 5s inactivity to exit meat temp mode
+const unsigned long MODE_ENTER_HOLD = 1000; // 1s hold to enter meat temp mode
 unsigned long lastButton1Time = 0;
 unsigned long lastButton2Time = 0;
+unsigned long lastButtonActivity = 0;
 bool button1LastState = HIGH;
 bool button2LastState = HIGH;
+bool meatTempMode = false;
 
 // Web server
 AsyncWebServer server(80);
@@ -69,8 +75,18 @@ float calculateTemp(float r) {
   return tempC * 9.0 / 5.0 + 32.0; // °F
 }
 
+String getUptime() {
+  unsigned long ms = millis();
+  unsigned long hours = ms / 3600000;
+  unsigned long minutes = (ms % 3600000) / 60000;
+  return String(hours) + "h " + String(minutes) + "m";
+}
+
 void setup() {
   Serial.begin(115200);
+
+  // Initialize I2C
+  Wire.begin(21, 22); // SDA GPIO21, SCL GPIO22
 
   // Initialize Wi-Fi
   WiFi.begin(ssid, password);
@@ -123,10 +139,14 @@ void setup() {
     html += "<p>Thermocouple: %TC_TEMP% &deg;F</p>";
     html += "<p>Thermistor 1: %T1_TEMP% &deg;F</p>";
     html += "<p>Thermistor 2: %T2_TEMP% &deg;F</p>";
-    html += "<p>Setpoint: %SET_TEMP% &deg;F</p>";
+    html += "<p>Smoker Setpoint: %SET_TEMP% &deg;F</p>";
+    html += "<p>Meat Done Temp: %MEAT_TEMP% &deg;F</p>";
+    html += "<p>Uptime: %UPTIME%</p>";
     html += "<p>Relay: %RELAY_STATE%</p>";
-    html += "<a href='/increase'><button>Increase (+5&deg;F)</button></a>";
-    html += "<a href='/decrease'><button>Decrease (-5&deg;F)</button></a>";
+    html += "<a href='/increase'><button>Increase Smoker (+5&deg;F)</button></a>";
+    html += "<a href='/decrease'><button>Decrease Smoker (-5&deg;F)</button></a>";
+    html += "<a href='/increase_meat'><button>Increase Meat (+5&deg;F)</button></a>";
+    html += "<a href='/decrease_meat'><button>Decrease Meat (-5&deg;F)</button></a>";
     html += "</body></html>";
 
     // Replace placeholders
@@ -155,6 +175,8 @@ void setup() {
     html.replace("%T1_TEMP%", String(tempThermistor1F, 1));
     html.replace("%T2_TEMP%", String(tempThermistor2F, 1));
     html.replace("%SET_TEMP%", String(smokerTemp, 1));
+    html.replace("%MEAT_TEMP%", String(meatDoneTemp, 1));
+    html.replace("%UPTIME%", getUptime());
     html.replace("%RELAY_STATE%", relayState ? "ON" : "OFF");
 
     request->send(200, "text/html", html);
@@ -175,6 +197,22 @@ void setup() {
       smokerTemp = SMOKER_TEMP_MIN;
     }
     integral = 0.0; // Reset integral
+    request->redirect("/");
+  });
+
+  server.on("/increase_meat", HTTP_GET, [](AsyncWebServerRequest *request){
+    meatDoneTemp += TEMP_STEP;
+    if (meatDoneTemp > SMOKER_TEMP_MAX) {
+      meatDoneTemp = SMOKER_TEMP_MAX;
+    }
+    request->redirect("/");
+  });
+
+  server.on("/decrease_meat", HTTP_GET, [](AsyncWebServerRequest *request){
+    meatDoneTemp -= TEMP_STEP;
+    if (meatDoneTemp < SMOKER_TEMP_MIN) {
+      meatDoneTemp = SMOKER_TEMP_MIN;
+    }
     request->redirect("/");
   });
 
@@ -217,54 +255,107 @@ void loop() {
   float rThermistor2 = (vOut2 * R_FIXED2) / (V_IN - vOut2);
   float tempThermistor2F = calculateTemp(rThermistor2);
 
+  // Check if both thermistors are within ±5°F of meatDoneTemp
+  if (abs(tempThermistor1F - meatDoneTemp) <= 5.0 && abs(tempThermistor2F - meatDoneTemp) <= 5.0) {
+    smokerTemp = meatDoneTemp;
+    integral = 0.0; // Reset integral to stabilize at meatDoneTemp
+  }
+
   // Read buttons with hold-to-adjust
   bool button1Pressed = false;
   bool button2Pressed = false;
   int button1State = digitalRead(button1Pin);
   int button2State = digitalRead(button2Pin);
 
-  // Button 1 (Increase smokerTemp)
+  // Check for meat temp mode entry/exit (both buttons pressed for 1s)
+  static unsigned long bothButtonsStart = 0;
+  if (button1State == LOW && button2State == LOW && button1LastState == HIGH && button2LastState == HIGH) {
+    bothButtonsStart = currentTime;
+  } else if (button1State == LOW && button2State == LOW && currentTime - bothButtonsStart >= MODE_ENTER_HOLD) {
+    meatTempMode = !meatTempMode; // Toggle mode
+    bothButtonsStart = currentTime; // Prevent immediate re-toggle
+    lastButtonActivity = currentTime;
+  }
+
+  // Exit meat temp mode after 5s inactivity
+  if (meatTempMode && currentTime - lastButtonActivity >= MODE_TIMEOUT) {
+    meatTempMode = false;
+  }
+
+  // Button 1 (Increase smokerTemp or meatDoneTemp)
   if (button1State == LOW && button1LastState == HIGH) {
     delay(50); // Debounce
     if (digitalRead(button1Pin) == LOW) {
       button1Pressed = true;
+      if (meatTempMode) {
+        meatDoneTemp += TEMP_STEP;
+        if (meatDoneTemp > SMOKER_TEMP_MAX) {
+          meatDoneTemp = SMOKER_TEMP_MAX;
+        }
+      } else {
+        smokerTemp += TEMP_STEP;
+        if (smokerTemp > SMOKER_TEMP_MAX) {
+          smokerTemp = SMOKER_TEMP_MAX;
+        }
+        integral = 0.0; // Reset integral
+      }
+      lastButton1Time = currentTime;
+      lastButtonActivity = currentTime;
+    }
+  } else if (button1State == LOW && currentTime - lastButton1Time >= REPEAT_DELAY) {
+    button1Pressed = true;
+    if (meatTempMode) {
+      meatDoneTemp += TEMP_STEP;
+      if (meatDoneTemp > SMOKER_TEMP_MAX) {
+        meatDoneTemp = SMOKER_TEMP_MAX;
+      }
+    } else {
       smokerTemp += TEMP_STEP;
       if (smokerTemp > SMOKER_TEMP_MAX) {
         smokerTemp = SMOKER_TEMP_MAX;
       }
       integral = 0.0; // Reset integral
-      lastButton1Time = currentTime;
     }
-  } else if (button1State == LOW && currentTime - lastButton1Time >= REPEAT_DELAY) {
-    button1Pressed = true;
-    smokerTemp += TEMP_STEP;
-    if (smokerTemp > SMOKER_TEMP_MAX) {
-      smokerTemp = SMOKER_TEMP_MAX;
-    }
-    integral = 0.0; // Reset integral
     lastButton1Time = currentTime;
+    lastButtonActivity = currentTime;
   }
 
-  // Button 2 (Decrease smokerTemp)
+  // Button 2 (Decrease smokerTemp or meatDoneTemp)
   if (button2State == LOW && button2LastState == HIGH) {
     delay(50); // Debounce
     if (digitalRead(button2Pin) == LOW) {
       button2Pressed = true;
+      if (meatTempMode) {
+        meatDoneTemp -= TEMP_STEP;
+        if (meatDoneTemp < SMOKER_TEMP_MIN) {
+          meatDoneTemp = SMOKER_TEMP_MIN;
+        }
+      } else {
+        smokerTemp -= TEMP_STEP;
+        if (smokerTemp < SMOKER_TEMP_MIN) {
+          smokerTemp = SMOKER_TEMP_MIN;
+        }
+        integral = 0.0; // Reset integral
+      }
+      lastButton2Time = currentTime;
+      lastButtonActivity = currentTime;
+    }
+  } else if (button2State == LOW && currentTime - lastButton2Time >= REPEAT_DELAY) {
+    button2Pressed = true;
+    if (meatTempMode) {
+      meatDoneTemp -= TEMP_STEP;
+      if (meatDoneTemp < SMOKER_TEMP_MIN) {
+        meatDoneTemp = SMOKER_TEMP_MIN;
+      }
+    } else {
       smokerTemp -= TEMP_STEP;
       if (smokerTemp < SMOKER_TEMP_MIN) {
         smokerTemp = SMOKER_TEMP_MIN;
       }
       integral = 0.0; // Reset integral
-      lastButton2Time = currentTime;
     }
-  } else if (button2State == LOW && currentTime - lastButton2Time >= REPEAT_DELAY) {
-    button2Pressed = true;
-    smokerTemp -= TEMP_STEP;
-    if (smokerTemp < SMOKER_TEMP_MIN) {
-      smokerTemp = SMOKER_TEMP_MIN;
-    }
-    integral = 0.0; // Reset integral
     lastButton2Time = currentTime;
+    lastButtonActivity = currentTime;
   }
 
   button1LastState = button1State;
@@ -334,13 +425,14 @@ void loop() {
   lcd.print(tempThermistor2F, 1);
   lcd.print(" F");
 
-  // Row 4: Setpoint and button/relay states
+  // Row 4: Smoker setpoint, meat done temp, button mode, relay state
   lcd.setCursor(0, 3);
-  lcd.print("Set:");
+  lcd.print("S:");
   lcd.print(smokerTemp, 1);
+  lcd.print(" M:");
+  lcd.print(meatDoneTemp, 1);
   lcd.print(" B:");
-  lcd.print(button1Pressed ? "1" : "0");
-  lcd.print(button2Pressed ? "1" : "0");
+  lcd.print(meatTempMode ? "M" : "S");
   lcd.print(" R:");
   lcd.print(relayState ? "ON" : "OFF");
 
@@ -349,6 +441,9 @@ void loop() {
   Serial.print("Thermistor 1: "); Serial.print(tempThermistor1F); Serial.println(" F");
   Serial.print("Thermistor 2: "); Serial.print(tempThermistor2F); Serial.println(" F");
   Serial.print("Smoker Setpoint: "); Serial.print(smokerTemp); Serial.println(" F");
+  Serial.print("Meat Done Temp: "); Serial.print(meatDoneTemp); Serial.println(" F");
+  Serial.print("Mode: "); Serial.println(meatTempMode ? "Meat Temp" : "Smoker Temp");
+  Serial.print("Uptime: "); Serial.println(getUptime());
   Serial.print("PID Output: "); Serial.print(output); Serial.println(" %");
   Serial.print("Button 1: "); Serial.println(button1Pressed ? "Pressed" : "Not Pressed");
   Serial.print("Button 2: "); Serial.println(button2Pressed ? "Pressed" : "Not Pressed");
