@@ -171,6 +171,7 @@ void setup() {
     raw1 /= 10;
     float vOut1 = (raw1 / 4095.0) * V_IN;
     float rThermistor1 = (vOut1 * R_FIXED1) / (V_IN - vOut1);
+    if (rThermistor1 <= 0) rThermistor1 = 1.0; // Prevent invalid resistance
     float tempThermistor1F = calculateTemp(rThermistor1);
 
     int raw2 = 0;
@@ -181,6 +182,7 @@ void setup() {
     raw2 /= 10;
     float vOut2 = (raw2 / 4095.0) * V_IN;
     float rThermistor2 = (vOut2 * R_FIXED2) / (V_IN - vOut2);
+    if (rThermistor2 <= 0) rThermistor2 = 1.0; // Prevent invalid resistance
     float tempThermistor2F = calculateTemp(rThermistor2);
 
     html.replace("%TC_TEMP%", String((int)round(tempThermocoupleF)));
@@ -254,6 +256,7 @@ void loop() {
   raw1 /= 10;
   float vOut1 = (raw1 / 4095.0) * V_IN;
   float rThermistor1 = (vOut1 * R_FIXED1) / (V_IN - vOut1);
+  if (rThermistor1 <= 0) rThermistor1 = 1.0; // Prevent invalid resistance
   float tempThermistor1F = calculateTemp(rThermistor1);
 
   // Read thermistor 2 (average for stability)
@@ -265,10 +268,11 @@ void loop() {
   raw2 /= 10;
   float vOut2 = (raw2 / 4095.0) * V_IN;
   float rThermistor2 = (vOut2 * R_FIXED2) / (V_IN - vOut2);
+  if (rThermistor2 <= 0) rThermistor2 = 1.0; // Prevent invalid resistance
   float tempThermistor2F = calculateTemp(rThermistor2);
 
   // Check if both thermistors are within ±5°F of meatDoneTemp
-  if (abs(tempThermistor1F - meatDoneTemp) <= 5.0 && abs(tempThermistor2F - meatDoneTemp) <= 5.0) {
+  if (fabs(tempThermistor1F - meatDoneTemp) <= 5.0 && fabs(tempThermistor2F - meatDoneTemp) <= 5.0) {
     smokerTemp = meatDoneTemp;
     integral = 0.0; // Reset integral to stabilize at meatDoneTemp
   }
