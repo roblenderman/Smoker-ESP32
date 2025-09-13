@@ -120,13 +120,19 @@ void setup() {
 
   // Initialize Rotary Encoder
   rotaryEncoder.begin();
-  rotaryEncoder.setup([]{ rotaryEncoder.readEncoder_ISR(); });
+  rotaryEncoder.setup(
+    []{ rotaryEncoder.readEncoder_ISR(); },  // Encoder ISR
+    []{ rotaryEncoder.readButton_ISR(); }    // Button ISR
+  );
   rotaryEncoder.setBoundaries(SMOKER_TEMP_MIN, SMOKER_TEMP_MAX, false);
   rotaryEncoder.setAcceleration(250);
 
   // Attach interrupts for rotary encoder pins
   attachInterrupt(digitalPinToInterrupt(ROTARY_ENCODER_A_PIN), [](){ rotaryEncoder.readEncoder_ISR(); }, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ROTARY_ENCODER_B_PIN), [](){ rotaryEncoder.readEncoder_ISR(); }, CHANGE);
+  
+  // Attach interrupt for encoder button
+  attachInterrupt(digitalPinToInterrupt(ROTARY_ENCODER_BUTTON_PIN), [](){ rotaryEncoder.readButton_ISR(); }, CHANGE);
   
   // Set ADC attenuation
   analogSetAttenuation(ADC_11db);
@@ -297,16 +303,13 @@ void loop() {
     lastButtonActivity = currentTime;
   }
 
-  // Encoder Button Handling (mode switch)
-  static bool lastButtonState = HIGH;
-  bool buttonState = rotaryEncoder.isEncoderButtonDown();
-  if (buttonState == LOW && lastButtonState == HIGH) {
-    // Button pressed (falling edge)
+  // Encoder Button Handling (mode switch) - using interrupt-driven state
+  ButtonState buttonState = rotaryEncoder.readButtonState();
+  if (buttonState == BUT_PUSHED) {
+    // Button just pressed
     meatTempMode = !meatTempMode;
     lastButtonActivity = currentTime;
-    delay(200); // Debounce
   }
-  lastButtonState = buttonState;
 
 
   // No automatic exit from meatTempMode; mode is switched only by encoder button
