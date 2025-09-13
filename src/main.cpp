@@ -36,9 +36,9 @@ const float R_FIXED2 = 10000.0; // 10kΩ
 
 
 
-// Rotary Encoder Pins (updated)
+// Rotary Encoder Pins (updated - avoid GPIO 12 for boot issues)
 const int ROTARY_ENCODER_A_PIN = 14;
-const int ROTARY_ENCODER_B_PIN = 12;
+const int ROTARY_ENCODER_B_PIN = 13;  // Changed from 12 to 13
 const int ROTARY_ENCODER_BUTTON_PIN = 25;
 const int ROTARY_ENCODER_VCC_PIN = -1; // Not used
 const int ROTARY_ENCODER_STEPS = 4;
@@ -60,17 +60,14 @@ float integral = 0.0;
 float prevError = 0.0;
 const float WINDOW_SIZE = 10000; // 10s window in ms
 unsigned long windowStartTime = 0;
+unsigned long lastPidTime = 0;  // Track last PID update time
 bool relayState = false;
 
-// Button hold-to-adjust
+// Button hold-to-adjust (legacy - no longer used)
 const unsigned long REPEAT_DELAY = 200; // ms between adjustments
 const unsigned long MODE_TIMEOUT = 5000; // 5s inactivity to exit meat temp mode
 const unsigned long MODE_ENTER_HOLD = 1000; // 1s hold to enter meat temp mode
-unsigned long lastButton1Time = 0;
-unsigned long lastButton2Time = 0;
 unsigned long lastButtonActivity = 0;
-bool button1LastState = LOW;  // Initial state is LOW (not pressed)
-bool button2LastState = LOW;  // Initial state is LOW (not pressed)
 bool meatTempMode = false;
 
 // Web server
@@ -136,6 +133,7 @@ void setup() {
 
   // Initialize PID timing
   windowStartTime = millis();
+  lastPidTime = millis();
 
   // Setup web server
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -311,8 +309,10 @@ void loop() {
 
   // PID control
   float error = smokerTemp - tempThermocoupleF;
-  float dt = (currentTime - windowStartTime) / 1000.0; // Approximate dt in seconds
-  if (dt == 0) dt = 1.0; // Avoid division by zero
+  unsigned long now = millis();
+  float dt = (now - lastPidTime) / 1000.0; // Time since last PID update
+  if (dt == 0) dt = 0.001; // Avoid division by zero, use small value
+  lastPidTime = now;
 
   // Proportional
   float P = Kp * error;
