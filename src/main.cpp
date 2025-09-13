@@ -4,7 +4,9 @@
 #include <max6675.h>
 #include <LiquidCrystal_I2C.h>
 #include <ESPAsyncWebServer.h>
+
 #include <AsyncTCP.h>
+#include <AiEsp32RotaryEncoder.h>
 
 // Wi-Fi credentials
 const char* ssid = "LHome";
@@ -33,9 +35,15 @@ const float BETA = 3950.0; // Adjust if known
 const int thermistorPin2 = 33; // ADC1
 const float R_FIXED2 = 10000.0; // 10kΩ
 
-// Buttons
-const int button1Pin = 26;  // Increase smokerTemp or meatDoneTemp
-const int button2Pin = 27;  // Decrease smokerTemp or meatDoneTemp
+
+// Rotary Encoder Pins
+const int ROTARY_ENCODER_A_PIN = 26;
+const int ROTARY_ENCODER_B_PIN = 27;
+const int ROTARY_ENCODER_BUTTON_PIN = 25;
+const int ROTARY_ENCODER_VCC_PIN = -1; // Not used
+const int ROTARY_ENCODER_STEPS = 4;
+
+AiEsp32RotaryEncoder rotaryEncoder(ROTARY_ENCODER_A_PIN, ROTARY_ENCODER_B_PIN, ROTARY_ENCODER_BUTTON_PIN, ROTARY_ENCODER_VCC_PIN, ROTARY_ENCODER_STEPS);
 
 // Smoker and meat setpoints
 float smokerTemp = 200.0; // °F, initial setpoint
@@ -113,14 +121,11 @@ void setup() {
   pinMode(relayPin, OUTPUT);
   digitalWrite(relayPin, HIGH); // Relay off
 
-  // Initialize Buttons with internal pull-down
-  // Buttons will read HIGH when pressed (connected to 3.3V) and LOW when not pressed (pulled down)
-  pinMode(button1Pin, INPUT_PULLDOWN);  // GPIO4 with internal pull-down
-  pinMode(button2Pin, INPUT_PULLDOWN);  // GPIO5 with internal pull-down
-  delay(50);  // Allow pins to stabilize
-  button1LastState = digitalRead(button1Pin);  // Initialize with actual reading
-  delay(10);
-  button2LastState = digitalRead(button2Pin);  // Initialize with actual reading
+  // Initialize Rotary Encoder
+  rotaryEncoder.begin();
+  rotaryEncoder.setup([]{ rotaryEncoder.readEncoder_ISR(); });
+  rotaryEncoder.setBoundaries(SMOKER_TEMP_MIN, SMOKER_TEMP_MAX, false);
+  rotaryEncoder.setAcceleration(250);
   
   // Set ADC attenuation
   analogSetAttenuation(ADC_11db);
@@ -266,147 +271,40 @@ void loop() {
     integral = 0.0; // Reset integral to stabilize at meatDoneTemp
   }
 
-  // Read buttons with hold-to-adjust and debounce
-  bool button1Pressed = false;
-  bool button2Pressed = false;
-  
-  // Read buttons directly (using internal pull-down)
-  int button1State = digitalRead(button1Pin);  // HIGH when pressed (3.3V)
-  delay(5);
-  int button2State = digitalRead(button2Pin);  // HIGH when pressed (3.3V)
-  delay(5);
-  
-  // Debug button states and pins with raw readings
-  Serial.println("\n--- Button States ---");
-  Serial.print("Button1 (Pin 26) State: "); Serial.print(button1State);
-  Serial.print(" Digital: "); Serial.print(digitalRead(button1Pin));
-  Serial.print(" Raw ADC: "); Serial.print(analogRead(button1Pin));
-  Serial.print(" Voltage: "); Serial.print((analogRead(button1Pin) * 3.3) / 4095.0, 2);
-  Serial.println("V");
-  
-  Serial.print("Button2 (Pin 27) State: "); Serial.print(button2State);
-  Serial.print(" Digital: "); Serial.print(digitalRead(button2Pin));
-  Serial.print(" Raw ADC: "); Serial.print(analogRead(button2Pin));
-  Serial.print(" Voltage: "); Serial.print((analogRead(button2Pin) * 3.3) / 4095.0, 2);
-  Serial.println("V");
-  
-  // Double check if both buttons are reported as pressed
-  if (button1State == HIGH && button2State == HIGH) {
-    // Verify again with a delay
-    delay(10);
-    if (digitalRead(button1Pin) != digitalRead(button2Pin)) {
-      // If they're different now, update the states
-      button1State = digitalRead(button1Pin);
-      button2State = digitalRead(button2Pin);
-    }
-  }
 
-  // Debounce both buttons
-  if (button1State != button1LastState || button2State != button2LastState) {
-    delay(50); // Debounce delay
-    button1State = digitalRead(button1Pin);
-    button2State = digitalRead(button2Pin);
-  }
-
-  // Check for meat temp mode entry/exit (both buttons pressed for 1s)
-  static unsigned long bothButtonsStart = 0;
-  if (button1State == HIGH && button2State == HIGH) {
-    if (button1LastState == LOW && button2LastState == LOW) {
-      bothButtonsStart = currentTime;
-    } else if (currentTime - bothButtonsStart >= MODE_ENTER_HOLD) {
-      meatTempMode = !meatTempMode; // Toggle mode
-      bothButtonsStart = currentTime; // Prevent immediate re-toggle
-      lastButtonActivity = currentTime;
-      // Wait for button release
-      while (digitalRead(button1Pin) == HIGH || digitalRead(button2Pin) == HIGH) {
-        delay(10);
-      }
-    }
-  }
-
-  // Exit meat temp mode after 5s inactivity
-  if (meatTempMode && currentTime - lastButtonActivity >= MODE_TIMEOUT) {
-    meatTempMode = false;
-  }
-
-  // Button 1 (Increase smokerTemp or meatDoneTemp)
-  if (button1State == HIGH && button1LastState == LOW) {
-    delay(50); // Debounce
-    if (digitalRead(button1Pin) == HIGH) {
-      button1Pressed = true;
-      if (meatTempMode) {
-        meatDoneTemp += TEMP_STEP;
-        if (meatDoneTemp > SMOKER_TEMP_MAX) {
-          meatDoneTemp = SMOKER_TEMP_MAX;
-        }
-      } else {
-        smokerTemp += TEMP_STEP;
-        if (smokerTemp > SMOKER_TEMP_MAX) {
-          smokerTemp = SMOKER_TEMP_MAX;
-        }
-        integral = 0.0; // Reset integral
-      }
-      lastButton1Time = currentTime;
-      lastButtonActivity = currentTime;
-    }
-  } else if (button1State == HIGH && currentTime - lastButton1Time >= REPEAT_DELAY) {
-    button1Pressed = true;
+  // Rotary Encoder Handling
+  static int32_t lastEncoderValue = 0;
+  rotaryEncoder.loop();
+  int32_t encoderValue = rotaryEncoder.readEncoder();
+  if (encoderValue != lastEncoderValue) {
+    int32_t diff = encoderValue - lastEncoderValue;
     if (meatTempMode) {
-      meatDoneTemp += TEMP_STEP;
-      if (meatDoneTemp > SMOKER_TEMP_MAX) {
-        meatDoneTemp = SMOKER_TEMP_MAX;
-      }
+      meatDoneTemp += diff * TEMP_STEP;
+      if (meatDoneTemp > SMOKER_TEMP_MAX) meatDoneTemp = SMOKER_TEMP_MAX;
+      if (meatDoneTemp < SMOKER_TEMP_MIN) meatDoneTemp = SMOKER_TEMP_MIN;
     } else {
-      smokerTemp += TEMP_STEP;
-      if (smokerTemp > SMOKER_TEMP_MAX) {
-        smokerTemp = SMOKER_TEMP_MAX;
-      }
+      smokerTemp += diff * TEMP_STEP;
+      if (smokerTemp > SMOKER_TEMP_MAX) smokerTemp = SMOKER_TEMP_MAX;
+      if (smokerTemp < SMOKER_TEMP_MIN) smokerTemp = SMOKER_TEMP_MIN;
       integral = 0.0; // Reset integral
     }
-    lastButton1Time = currentTime;
+    lastEncoderValue = encoderValue;
     lastButtonActivity = currentTime;
   }
 
-  // Button 2 (Decrease smokerTemp or meatDoneTemp)
-  if (button2State == HIGH && button2LastState == LOW) {
-    delay(50); // Debounce
-    if (digitalRead(button2Pin) == HIGH) {
-      button2Pressed = true;
-      if (meatTempMode) {
-        meatDoneTemp -= TEMP_STEP;
-        if (meatDoneTemp < SMOKER_TEMP_MIN) {
-          meatDoneTemp = SMOKER_TEMP_MIN;
-        }
-      } else {
-        smokerTemp -= TEMP_STEP;
-        if (smokerTemp < SMOKER_TEMP_MIN) {
-          smokerTemp = SMOKER_TEMP_MIN;
-        }
-        integral = 0.0; // Reset integral
-      }
-      lastButton2Time = currentTime;
-      lastButtonActivity = currentTime;
-    }
-  } else if (button2State == HIGH && currentTime - lastButton2Time >= REPEAT_DELAY) {
-    button2Pressed = true;
-    if (meatTempMode) {
-      meatDoneTemp -= TEMP_STEP;
-      if (meatDoneTemp < SMOKER_TEMP_MIN) {
-        meatDoneTemp = SMOKER_TEMP_MIN;
-      }
-    } else {
-      smokerTemp -= TEMP_STEP;
-      if (smokerTemp < SMOKER_TEMP_MIN) {
-        smokerTemp = SMOKER_TEMP_MIN;
-      }
-      integral = 0.0; // Reset integral
-    }
-    lastButton2Time = currentTime;
+  // Encoder Button Handling (mode switch)
+  static bool lastButtonState = HIGH;
+  bool buttonState = rotaryEncoder.isEncoderButtonDown();
+  if (buttonState == LOW && lastButtonState == HIGH) {
+    // Button pressed (falling edge)
+    meatTempMode = !meatTempMode;
     lastButtonActivity = currentTime;
+    delay(200); // Debounce
   }
+  lastButtonState = buttonState;
 
-  button1LastState = button1State;
-  button2LastState = button2State;
+
+  // No automatic exit from meatTempMode; mode is switched only by encoder button
 
   // PID control
   float error = smokerTemp - tempThermocoupleF;
@@ -452,34 +350,97 @@ void loop() {
     prevError = error; // Update prevError at window reset
   }
 
-  // Display on 20x4 LCD
-  lcd.clear(); // Clear to avoid overlap
-  // Row 1: Thermocouple temperature
-  lcd.setCursor(0, 0);
-  lcd.print("Smoker: ");
-  lcd.print((int)round(tempThermocoupleF));
-  lcd.print("F");
+  // Display on 20x4 LCD with optimized updates
+  static int lastTempTC = -999;
+  static int lastTemp1 = -999;
+  static int lastTemp2 = -999;
+  static int lastSmokerTemp = -999;
+  static int lastMeatTemp = -999;
+  static bool lastMode = !meatTempMode;  // Initialize different to force first update
 
-  // Row 2: Thermistor 1 temperature
-  lcd.setCursor(0, 1);
-  lcd.print("T1: ");
-  lcd.print((int)round(tempThermistor1F));
-  lcd.print("F");
+  // Update only changed values
+  int currentTempTC = (int)round(tempThermocoupleF);
+  if (currentTempTC != lastTempTC) {
+    lcd.setCursor(8, 0);  // Position after "Smoker: "
+    lcd.print("    ");    // Clear previous value
+    lcd.setCursor(8, 0);
+    lcd.print(currentTempTC);
+    lastTempTC = currentTempTC;
+  }
 
-  // Row 3: Thermistor 2 temperature
-  lcd.setCursor(0, 2);
-  lcd.print("T2: ");
-  lcd.print((int)round(tempThermistor2F));
-  lcd.print("F");
+  int currentTemp1 = (int)round(tempThermistor1F);
+  if (currentTemp1 != lastTemp1) {
+    lcd.setCursor(4, 1);  // Position after "T1: "
+    lcd.print("    ");    // Clear previous value
+    lcd.setCursor(4, 1);
+    lcd.print(currentTemp1);
+    lastTemp1 = currentTemp1;
+  }
 
-  // Row 4: Smoker setpoint, meat done temp, button mode, relay state
-  lcd.setCursor(0, 3);
-  lcd.print("S:");
-  lcd.print((int)smokerTemp);
-  lcd.print(" M:");
-  lcd.print((int)meatDoneTemp);
-  lcd.print(" B:");
-  lcd.print(meatTempMode ? "M" : "S");
+  int currentTemp2 = (int)round(tempThermistor2F);
+  if (currentTemp2 != lastTemp2) {
+    lcd.setCursor(4, 2);  // Position after "T2: "
+    lcd.print("    ");    // Clear previous value
+    lcd.setCursor(4, 2);
+    lcd.print(currentTemp2);
+    lastTemp2 = currentTemp2;
+  }
+
+  // Bottom row updates
+  int currentSmokerTemp = (int)round(smokerTemp);
+  if (currentSmokerTemp != lastSmokerTemp) {
+    lcd.setCursor(2, 3);  // Position after "S:"
+    lcd.print("   ");     // Clear previous value
+    lcd.setCursor(2, 3);
+    lcd.print(currentSmokerTemp);
+    lastSmokerTemp = currentSmokerTemp;
+  }
+
+  int currentMeatTemp = (int)round(meatDoneTemp);
+  if (currentMeatTemp != lastMeatTemp) {
+    lcd.setCursor(8, 3);  // Position after "M:"
+    lcd.print("   ");     // Clear previous value
+    lcd.setCursor(8, 3);
+    lcd.print(currentMeatTemp);
+    lastMeatTemp = currentMeatTemp;
+  }
+
+  if (meatTempMode != lastMode) {
+    lcd.setCursor(14, 3);  // Position after "B:"
+    lcd.print(meatTempMode ? "M" : "S");
+    lastMode = meatTempMode;
+  }
+
+  // Initialize display if it hasn't been done (first run)
+  static bool firstRun = true;
+  if (firstRun) {
+    lcd.clear();
+    // Write static labels
+    lcd.setCursor(0, 0); lcd.print("Smoker: ");
+    lcd.setCursor(0, 1); lcd.print("T1: ");
+    lcd.setCursor(0, 2); lcd.print("T2: ");
+    lcd.setCursor(0, 3); lcd.print("S:");
+    lcd.setCursor(6, 3); lcd.print("M:");
+    lcd.setCursor(12, 3); lcd.print("B:");
+    
+    // Force initial values to display
+    lcd.setCursor(8, 0); lcd.print((int)round(tempThermocoupleF));
+    lcd.setCursor(4, 1); lcd.print((int)round(tempThermistor1F));
+    lcd.setCursor(4, 2); lcd.print((int)round(tempThermistor2F));
+    lcd.setCursor(2, 3); lcd.print((int)round(smokerTemp));
+    lcd.setCursor(8, 3); lcd.print((int)round(meatDoneTemp));
+    lcd.setCursor(14, 3); lcd.print(meatTempMode ? "M" : "S");
+    
+    // Update last values to match what we just displayed
+    lastTempTC = (int)round(tempThermocoupleF);
+    lastTemp1 = (int)round(tempThermistor1F);
+    lastTemp2 = (int)round(tempThermistor2F);
+    lastSmokerTemp = (int)round(smokerTemp);
+    lastMeatTemp = (int)round(meatDoneTemp);
+    lastMode = meatTempMode;
+    
+    firstRun = false;
+  }
   //lcd.print(" R:");
  // lcd.print(relayState ? "ON" : "OFF");
 
@@ -493,8 +454,8 @@ void loop() {
   Serial.print("Mode: "); Serial.println(meatTempMode ? "Meat Temp" : "Smoker Temp");
   Serial.print("Uptime: "); Serial.println(getUptime());
   Serial.print("PID Output: "); Serial.print(output); Serial.println(" %");
-  Serial.print("Button 1: "); Serial.println(button1Pressed ? "Pressed" : "Not Pressed");
-  Serial.print("Button 2: "); Serial.println(button2Pressed ? "Pressed" : "Not Pressed");
+  Serial.print("Rotary Encoder: "); Serial.println(rotaryEncoder.readEncoder());
+  Serial.print("Encoder Button: "); Serial.println(rotaryEncoder.isEncoderButtonDown() ? "Pressed" : "Not Pressed");
   Serial.print("Relay: "); Serial.println(relayState ? "ON" : "OFF");
 
   delay(300);
