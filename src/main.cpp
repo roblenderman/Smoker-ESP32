@@ -4,7 +4,6 @@
 #include <max6675.h>
 #include <LiquidCrystal_I2C.h>
 #include <ESPAsyncWebServer.h>
-
 #include <AsyncTCP.h>
 #include <AiEsp32RotaryEncoder.h>
 
@@ -36,9 +35,10 @@ const int thermistorPin2 = 33; // ADC1
 const float R_FIXED2 = 10000.0; // 10kΩ
 
 
-// Rotary Encoder Pins
-const int ROTARY_ENCODER_A_PIN = 26;
-const int ROTARY_ENCODER_B_PIN = 27;
+
+// Rotary Encoder Pins (updated)
+const int ROTARY_ENCODER_A_PIN = 14;
+const int ROTARY_ENCODER_B_PIN = 12;
 const int ROTARY_ENCODER_BUTTON_PIN = 25;
 const int ROTARY_ENCODER_VCC_PIN = -1; // Not used
 const int ROTARY_ENCODER_STEPS = 4;
