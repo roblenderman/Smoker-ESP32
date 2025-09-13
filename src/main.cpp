@@ -126,6 +126,10 @@ void setup() {
   rotaryEncoder.setup([]{ rotaryEncoder.readEncoder_ISR(); });
   rotaryEncoder.setBoundaries(SMOKER_TEMP_MIN, SMOKER_TEMP_MAX, false);
   rotaryEncoder.setAcceleration(250);
+
+  // Attach interrupts for rotary encoder pins
+  attachInterrupt(digitalPinToInterrupt(ROTARY_ENCODER_A_PIN), [](){ rotaryEncoder.readEncoder_ISR(); }, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ROTARY_ENCODER_B_PIN), [](){ rotaryEncoder.readEncoder_ISR(); }, CHANGE);
   
   // Set ADC attenuation
   analogSetAttenuation(ADC_11db);
@@ -274,7 +278,6 @@ void loop() {
 
   // Rotary Encoder Handling
   static int32_t lastEncoderValue = 0;
-  rotaryEncoder.loop();
   int32_t encoderValue = rotaryEncoder.readEncoder();
   if (encoderValue != lastEncoderValue) {
     int32_t diff = encoderValue - lastEncoderValue;
