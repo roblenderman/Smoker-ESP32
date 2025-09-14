@@ -1,3 +1,35 @@
 {
-    "cmake.sourceDirectory": "${workspaceFolder}"
+    "cmake.sourceDirectory": "${workspaceFolder}",
+    
+    // Terminal Shell Integration Settings
+    "terminal.integrated.shellIntegration.enabled": true,
+    "terminal.integrated.shellIntegration.showWelcome": true,
+    "terminal.integrated.shellIntegration.suggestEnabled": true,
+    
+    // Enhanced terminal features for AI assistance
+    "terminal.integrated.commandsToSkipShell": [],
+    "terminal.integrated.enableMultiLinePasteWarning": false,
+    "terminal.integrated.rightClickBehavior": "copyPaste",
+    
+    // PlatformIO specific settings
+    "platformio-ide.useBuiltinPython": true,
+    "platformio-ide.autoRebuildAutocompleteIndex": true,
+    
+    // Better file associations for embedded development
+    "files.associations": {
+        "*.ino": "cpp",
+        "*.h": "c",
+        "*.c": "c",
+        "*.cpp": "cpp"
+    },
+    
+    // Enable breadcrumbs for better navigation
+    "breadcrumbs.enabled": true,
+    
+    // Git integration
+    "git.enableSmartCommit": true,
+    "git.confirmSync": false,
+    
+    // Workspace recommendations
+    "extensions.showRecommendationsOnlyOnDemand": false
 }

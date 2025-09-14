@@ -90,6 +90,30 @@ String getUptime() {
   return String(hours) + "h " + String(minutes) + "m";
 }
 
+String getUptimeLCD() {
+  unsigned long ms = millis();
+  unsigned long hours = ms / 3600000;
+  unsigned long minutes = (ms % 3600000) / 60000;
+  
+  // Format as HH:MM with leading zeros - force two digits for both hours and minutes
+  String timeStr = "Time:";
+  
+  // Force two digits for hours (00-99)
+  if (hours < 10) {
+    timeStr += "0";
+  }
+  timeStr += String(hours);
+  timeStr += ":";
+  
+  // Force two digits for minutes (00-59)
+  if (minutes < 10) {
+    timeStr += "0";
+  }
+  timeStr += String(minutes);
+  
+  return timeStr;
+}
+
 // Add after includes and before setup()
 void testEncoderGPIO() {
   static unsigned long lastTest = 0;
@@ -716,6 +740,7 @@ void loop() {
   static int lastMeatTemp = -999;
   static int lastPidOutput = -999;
   static bool lastMode = !meatTempMode;  // Initialize different to force first update
+  static String lastUptime = "";  // Track uptime changes
 
   // Update only changed values
   int currentTempTC = (int)round(tempThermocoupleF);
@@ -741,11 +766,22 @@ void loop() {
 
   int currentTemp1 = (int)round(tempThermistor1F);
   if (currentTemp1 != lastTemp1) {
-    lcd.setCursor(4, 1);  // Position after "T1: "
+    lcd.setCursor(4, 1);  // Position after "T1: " (back to original position)
     lcd.print("    ");    // Clear previous value
     lcd.setCursor(4, 1);
     lcd.print(currentTemp1);
     lastTemp1 = currentTemp1;
+  }
+
+  // Update uptime on line 1, right side (every minute to avoid too frequent updates)
+  String currentUptime = getUptimeLCD();
+  if (currentUptime != lastUptime) {
+    lcd.setCursor(10, 1);  // Move one position left (position 10-18 for 9 chars "Time:HH:MM")
+    lcd.print("          ");  // Clear the right side (10 spaces to be safe)
+    lcd.setCursor(10, 1);
+    lcd.print(currentUptime);
+    // Ensure we don't overrun - the string should be exactly 9 chars: "Time:HH:MM"
+    lastUptime = currentUptime;
   }
 
   int currentTemp2 = (int)round(tempThermistor2F);
@@ -789,6 +825,7 @@ void loop() {
     // Write static labels
     lcd.setCursor(0, 0); lcd.print("Smoker: ");
     lcd.setCursor(12, 0); lcd.print("Pwr: ");
+    // Line 1 will show "T1: XXX      Time:HH:MM"
     lcd.setCursor(0, 1); lcd.print("T1: ");
     lcd.setCursor(0, 2); lcd.print("T2: ");
     lcd.setCursor(0, 3); lcd.print("S:");
@@ -799,6 +836,7 @@ void loop() {
     lcd.setCursor(8, 0); lcd.print((int)round(tempThermocoupleF));
     lcd.setCursor(12, 0); lcd.print("Pwr:"); lcd.print((int)round(output)); lcd.print("%");
     lcd.setCursor(4, 1); lcd.print((int)round(tempThermistor1F));
+    lcd.setCursor(10, 1); lcd.print(getUptimeLCD());  // Moved to position 10
     lcd.setCursor(4, 2); lcd.print((int)round(tempThermistor2F));
     lcd.setCursor(2, 3); lcd.print((int)round(smokerTemp));
     lcd.setCursor(8, 3); lcd.print((int)round(meatDoneTemp));
@@ -812,6 +850,7 @@ void loop() {
     lastMeatTemp = (int)round(meatDoneTemp);
     lastPidOutput = (int)round(output);
     lastMode = meatTempMode;
+    lastUptime = getUptimeLCD();
     
     firstRun = false;
   }
