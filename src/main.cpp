@@ -6,6 +6,7 @@
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
 #include <AiEsp32RotaryEncoder.h>
+#include <movingAvg.h>  // Moving average library for filtering
 
 // Wi-Fi credentials
 const char* ssid = "LHome";
@@ -25,16 +26,19 @@ const int relayPin = 16;
 
 // Voltage Divider (Thermistor 1)
 const int thermistorPin1 = 32; // ADC1
-const float R_FIXED1 = 10000.0; // 10kΩ
+const float R_FIXED1 = 99000.0; // 10kΩ
 const float V_IN = 3.3; // 3.3V
 const float R_25 = 110000.0; // 110kΩ at 25°C
-const float BETA = 3950.0; // Adjust if known
+const float BETA = 4350.0; // Adjust if known
 
 // Voltage Divider (Thermistor 2)
 const int thermistorPin2 = 33; // ADC1
 const float R_FIXED2 = 10000.0; // 10kΩ
 
-
+// Moving average filters for temperature readings (smoothing)
+movingAvg thermistor1Filter(15);     // 10-sample moving average for thermistor 1
+movingAvg thermistor2Filter(15);     // 10-sample moving average for thermistor 2
+movingAvg thermocoupleFilter(8);     // 8-sample moving average for thermocouple (slightly less to maintain responsiveness)
 
 // Rotary Encoder Pins (updated - avoid GPIO 12 for boot issues)
 const int ROTARY_ENCODER_A_PIN = 13;  // Back to 13 for wiring check
@@ -179,6 +183,12 @@ void setup() {
   // Allow time for encoder to stabilize
   delay(100);
   
+  // Initialize moving average filters for thermistors and thermocouple
+  thermistor1Filter.begin();
+  thermistor2Filter.begin();
+  thermocoupleFilter.begin();
+  Serial.println("Moving average filters initialized");
+  
   Serial.println("Rotary encoder initialized");
   
   // Test encoder GPIO pins during startup
@@ -273,7 +283,16 @@ void setup() {
   lcd.setCursor(0, 1);
   lcd.print("IP: ");
   lcd.print(WiFi.localIP());
-  delay(3000); // Show IP for 3s
+  
+  // Show MAC address on LCD for 3 seconds
+  lcd.setCursor(0, 2);
+  lcd.print("MAC:");
+  lcd.setCursor(0, 3);
+  String macAddr = WiFi.macAddress();
+  macAddr.replace(":", "");  // Remove colons to fit better
+  lcd.print(macAddr.substring(0, 12));  // Show first 12 chars
+  
+  delay(5000); // Show IP and MAC for 5s
 
   // Initialize Relay
   pinMode(relayPin, OUTPUT);
@@ -312,25 +331,43 @@ void setup() {
     html += "<a href='/decrease_meat'><button>Decrease Meat (-5&deg;F)</button></a>";
     html += "</body></html>";
 
-    // Replace placeholders
-    float tempThermocoupleF = thermocouple.readCelsius() * 9.0 / 5.0 + 32.0;
-    int raw1 = 0;
-    for (int i = 0; i < 10; i++) {
-      raw1 += analogRead(thermistorPin1);
-      delay(10);
+    // Replace placeholders with filtered readings
+    float thermocoupleReading = 0;
+    int validReadings = 0;
+    
+    // Take multiple samples for thermocouple stability
+    for (int i = 0; i < 3; i++) {
+      float reading = thermocouple.readCelsius();
+      if (!isnan(reading)) {
+        thermocoupleReading += reading;
+        validReadings++;
+      }
+      delay(30);
     }
-    raw1 /= 10;
+    
+    float tempThermocoupleF;
+    if (validReadings > 0) {
+      tempThermocoupleF = thermocoupleFilter.reading(thermocoupleReading / validReadings) * 9.0 / 5.0 + 32.0;
+    } else {
+      tempThermocoupleF = thermocoupleFilter.reading(thermocouple.readCelsius()) * 9.0 / 5.0 + 32.0;
+    }
+    int raw1 = 0;
+    for (int i = 0; i < 20; i++) {  // Increased from 10 to 20 samples
+      raw1 += analogRead(thermistorPin1);
+      delay(5);  // Reduced delay since we have more samples
+    }
+    raw1 /= 20;
     float vOut1 = (raw1 / 4095.0) * V_IN;
     float rThermistor1 = (vOut1 * R_FIXED1) / (V_IN - vOut1);
     if (rThermistor1 <= 0) rThermistor1 = 1.0; // Prevent invalid resistance
     float tempThermistor1F = calculateTemp(rThermistor1);
 
     int raw2 = 0;
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 20; i++) {  // Increased from 10 to 20 samples
       raw2 += analogRead(thermistorPin2);
-      delay(10);
+      delay(5);  // Reduced delay since we have more samples
     }
-    raw2 /= 10;
+    raw2 /= 20;
     float vOut2 = (raw2 / 4095.0) * V_IN;
     float rThermistor2 = (vOut2 * R_FIXED2) / (V_IN - vOut2);
     if (rThermistor2 <= 0) rThermistor2 = 1.0; // Prevent invalid resistance
@@ -542,30 +579,57 @@ void loop() {
     return;
   }
 
-  // Read thermocouple
-  float tempThermocouple = thermocouple.readCelsius();
+  // Read thermocouple (multiple samples + moving average for improved accuracy)
+  float tempSum = 0;
+  int validReadings = 0;
+  
+  // Take multiple samples to reduce noise
+  for (int i = 0; i < 5; i++) {
+    float reading = thermocouple.readCelsius();
+    if (!isnan(reading)) {  // Only use valid readings
+      tempSum += reading;
+      validReadings++;
+    }
+    delay(50);  // Short delay between samples
+  }
+  
+  float tempThermocouple;
+  if (validReadings > 0) {
+    tempThermocouple = thermocoupleFilter.reading(tempSum / validReadings);
+  } else {
+    tempThermocouple = thermocoupleFilter.reading(thermocouple.readCelsius());
+  }
+  
   float tempThermocoupleF = tempThermocouple * 9.0 / 5.0 + 32.0;
 
-  // Read thermistor 1 (average for stability)
+  // Read thermistor 1 (20 samples + moving average for improved accuracy)
   int raw1 = 0;
-  for (int i = 0; i < 10; i++) {
+  for (int i = 0; i < 20; i++) {  // Increased from 10 to 20 samples
     raw1 += analogRead(thermistorPin1);
-    delay(10);
+    delay(5);  // Reduced delay since we have more samples
   }
-  raw1 /= 10;
-  float vOut1 = (raw1 / 4095.0) * V_IN;
+  raw1 /= 20;
+  
+  // Apply moving average filter to raw ADC reading
+  int filteredRaw1 = thermistor1Filter.reading(raw1);
+  
+  float vOut1 = (filteredRaw1 / 4095.0) * V_IN;
   float rThermistor1 = (vOut1 * R_FIXED1) / (V_IN - vOut1);
   if (rThermistor1 <= 0) rThermistor1 = 1.0; // Prevent invalid resistance
   float tempThermistor1F = calculateTemp(rThermistor1);
 
-  // Read thermistor 2 (average for stability)
+  // Read thermistor 2 (20 samples + moving average for improved accuracy)
   int raw2 = 0;
-  for (int i = 0; i < 10; i++) {
+  for (int i = 0; i < 20; i++) {  // Increased from 10 to 20 samples
     raw2 += analogRead(thermistorPin2);
-    delay(10);
+    delay(5);  // Reduced delay since we have more samples
   }
-  raw2 /= 10;
-  float vOut2 = (raw2 / 4095.0) * V_IN;
+  raw2 /= 20;
+  
+  // Apply moving average filter to raw ADC reading
+  int filteredRaw2 = thermistor2Filter.reading(raw2);
+  
+  float vOut2 = (filteredRaw2 / 4095.0) * V_IN;
   float rThermistor2 = (vOut2 * R_FIXED2) / (V_IN - vOut2);
   if (rThermistor2 <= 0) rThermistor2 = 1.0; // Prevent invalid resistance
   float tempThermistor2F = calculateTemp(rThermistor2);
