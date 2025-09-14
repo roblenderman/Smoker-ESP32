@@ -26,14 +26,14 @@ const int relayPin = 16;
 
 // Voltage Divider (Thermistor 1)
 const int thermistorPin1 = 32; // ADC1
-const float R_FIXED1 = 99000.0; // 10kΩ
+const float R_FIXED1 = 9900.0; // 10kΩ
 const float V_IN = 3.3; // 3.3V
 const float R_25 = 110000.0; // 110kΩ at 25°C
 const float BETA = 4350.0; // Adjust if known
 
 // Voltage Divider (Thermistor 2)
 const int thermistorPin2 = 33; // ADC1
-const float R_FIXED2 = 10000.0; // 10kΩ
+const float R_FIXED2 = 9900.0; // 10kΩ
 
 // Moving average filters for temperature readings (smoothing)
 movingAvg thermistor1Filter(15);     // 10-sample moving average for thermistor 1
