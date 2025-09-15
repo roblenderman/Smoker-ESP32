@@ -67,6 +67,17 @@ const float TEMP_STEP = 5.0; // °F increment
 // LCD update flag
 bool updateLCD = false;
 
+// --- Meat temp prediction variables ---
+const int PREDICTION_WINDOW_MINUTES = 15;
+const int PREDICTION_INTERVAL_SECONDS = 60; // 1 minute
+float meatTempHistory[PREDICTION_WINDOW_MINUTES];
+unsigned long meatTempTimestamps[PREDICTION_WINDOW_MINUTES];
+int meatTempHistoryIndex = 0;
+int meatTempHistoryCount = 0;
+unsigned long lastPredictionSampleTime = 0;
+float lastMeatTempPredictionMinutes = -1;
+bool predictionValid = false;
+
 // PID parameters
 const float Kp = 7.0;
 const float Ki = 0.1;
@@ -338,12 +349,14 @@ void setup() {
     html += "<a href='/increase_meat'><button title='Increase Meat'>+5&deg;F</button></a>";
     html += "<a href='/decrease_meat'><button title='Decrease Meat'>-5&deg;F</button></a>";
     html += "</td></tr>";
-    html += "<tr><td>Thermistor 2</td><td>%T2_TEMP% &deg;F</td><td></td><td></td></tr>";
-    html += "<tr><td>Smoker</td><td></td><td>%SET_TEMP% &deg;F</td>";
-    html += "<td>";
-    html += "<a href='/increase'><button title='Increase Smoker'>+5&deg;F</button></a>";
-    html += "<a href='/decrease'><button title='Decrease Smoker'>-5&deg;F</button></a>";
-    html += "</td></tr>";
+  html += "<tr><td>Thermistor 2</td><td>%T2_TEMP% &deg;F</td><td></td><td></td></tr>";
+  // ETA row for meat temp prediction
+  html += "<tr><td colspan='4' style='text-align:center;font-weight:bold;'>ETA to Meat Target: %MEAT_ETA%</td></tr>";
+  html += "<tr><td>Smoker</td><td></td><td>%SET_TEMP% &deg;F</td>";
+  html += "<td>";
+  html += "<a href='/increase'><button title='Increase Smoker'>+5&deg;F</button></a>";
+  html += "<a href='/decrease'><button title='Decrease Smoker'>-5&deg;F</button></a>";
+  html += "</td></tr>";
     html += "<tr><td>Uptime</td><td colspan='3'>%UPTIME%</td></tr>";
     html += "<tr><td>Relay</td><td colspan='3'>%RELAY_STATE%</td></tr>";
     html += "</table>";
@@ -396,6 +409,17 @@ void setup() {
     html.replace("%T2_TEMP%", String((int)round(tempThermistor2F)));
     html.replace("%SET_TEMP%", String((int)round(smokerTemp)));
     html.replace("%MEAT_TEMP%", String(meatDoneTemp, 1));
+    // ETA prediction for web
+    String etaStr = "--";
+    if (predictionValid) {
+      int min = (int)round(lastMeatTempPredictionMinutes);
+      if (min < 1000) {
+        etaStr = String(min) + " min";
+      } else {
+        etaStr = ">999 min";
+      }
+    }
+    html.replace("%MEAT_ETA%", etaStr);
     html.replace("%UPTIME%", getUptime());
     html.replace("%RELAY_STATE%", relayState ? "ON" : "OFF");
 
@@ -712,6 +736,37 @@ void loop() {
     lastTeleplotTime = currentTime;
   }
 
+  // --- Meat temp prediction logic ---
+  // Use thermistor 1 as the primary meat probe
+  float currentMeatTemp = tempThermistor1F;
+  if (currentTime - lastPredictionSampleTime > PREDICTION_INTERVAL_SECONDS * 1000UL) {
+    meatTempHistory[meatTempHistoryIndex] = currentMeatTemp;
+    meatTempTimestamps[meatTempHistoryIndex] = currentTime;
+    meatTempHistoryIndex = (meatTempHistoryIndex + 1) % PREDICTION_WINDOW_MINUTES;
+    if (meatTempHistoryCount < PREDICTION_WINDOW_MINUTES) meatTempHistoryCount++;
+    lastPredictionSampleTime = currentTime;
+  }
+
+  // Only predict if we have at least 2 samples and meat temp is below target
+  predictionValid = false;
+  lastMeatTempPredictionMinutes = -1;
+  if (meatTempHistoryCount >= 2 && currentMeatTemp < meatDoneTemp - 0.5) {
+    // Find the oldest sample in the buffer
+    int oldestIdx = (meatTempHistoryIndex + (PREDICTION_WINDOW_MINUTES - meatTempHistoryCount)) % PREDICTION_WINDOW_MINUTES;
+    float oldestTemp = meatTempHistory[oldestIdx];
+    unsigned long oldestTime = meatTempTimestamps[oldestIdx];
+    float deltaTemp = currentMeatTemp - oldestTemp;
+    float deltaTimeMin = (currentTime - oldestTime) / 60000.0;
+    if (deltaTemp > 0.1 && deltaTimeMin > 0.5) { // Require at least 0.1°F rise and 0.5 min window
+      float rate = deltaTemp / deltaTimeMin; // degF per min
+      float remaining = meatDoneTemp - currentMeatTemp;
+      if (rate > 0.01) { // Require at least 0.01°F/min
+        lastMeatTempPredictionMinutes = remaining / rate;
+        predictionValid = true;
+      }
+    }
+  }
+
   // Check if both thermistors have reached the meat target temperature
   float diff1 = tempThermistor1F - meatDoneTemp;  // Positive if above target
   float diff2 = tempThermistor2F - meatDoneTemp;  // Positive if above target
@@ -723,6 +778,13 @@ void loop() {
     Serial.print("°F (over target: "); Serial.print(diff1, 1); Serial.print("°F), T2: ");
     Serial.print(tempThermistor2F, 1); Serial.print("°F (over target: "); Serial.print(diff2, 1);
     Serial.print("°F), Target: "); Serial.print(meatDoneTemp, 1); Serial.println("°F");
+    if (predictionValid) {
+      Serial.print("Estimated time to target: ");
+      Serial.print(lastMeatTempPredictionMinutes, 1);
+      Serial.println(" min");
+    } else {
+      Serial.println("Estimated time to target: --");
+    }
     lastMeatDebugTime = currentTime;
   }
   
@@ -911,6 +973,41 @@ void loop() {
     lastTemp2 = currentTemp2;
   }
 
+  // --- LCD: Show meat temp prediction as TLeft:HH:MM right-justified on row 2 (3rd row, 0-based) ---
+  static float lastDisplayedPrediction = -999;
+  static bool lastDisplayedPredictionValid = false;
+  static String lastDisplayedTimeStr = "";
+  String timeStr = "";
+  if (predictionValid) {
+    int min = (int)round(lastMeatTempPredictionMinutes);
+    if (min < 10000) {
+      int hours = min / 60;
+      int mins = min % 60;
+      char buf[10];
+      snprintf(buf, sizeof(buf), "%02d:%02d", hours, mins);
+      timeStr = String(buf);
+    } else {
+      timeStr = ">99:59";
+    }
+  } else {
+    timeStr = "--:--";
+  }
+  // Only update if changed
+  if (predictionValid != lastDisplayedPredictionValid || (predictionValid && fabs(lastMeatTempPredictionMinutes - lastDisplayedPrediction) > 0.5) || timeStr != lastDisplayedTimeStr) {
+    // Format: 'TLeft:HH:MM' right-justified (end at col 19)
+    String label = "TLeft:";
+    String fullStr = label + timeStr;
+    int startCol = 20 - fullStr.length();
+    if (startCol < 0) startCol = 0;
+    lcd.setCursor(startCol, 2);
+    for (int i = startCol; i < 20; ++i) lcd.print(" "); // Clear to end
+    lcd.setCursor(startCol, 2);
+    lcd.print(fullStr);
+    lastDisplayedPrediction = lastMeatTempPredictionMinutes;
+    lastDisplayedPredictionValid = predictionValid;
+    lastDisplayedTimeStr = timeStr;
+  }
+
   // Bottom row updates
   int currentSmokerTemp = (int)round(smokerTemp);
   if (currentSmokerTemp != lastSmokerTemp) {
@@ -931,8 +1028,10 @@ void loop() {
   }
 
   if (meatTempMode != lastMode) {
-    lcd.setCursor(14, 3);  // Position after "B:"
-    lcd.print(meatTempMode ? "M" : "S");
+    lcd.setCursor(14, 3);  // Position after "M:"
+    lcd.print("       "); // Clear previous value (up to 7 chars)
+    lcd.setCursor(14, 3);
+    lcd.print(meatTempMode ? "Meat" : "Smoker");
     lastMode = meatTempMode;
   }
 
@@ -947,8 +1046,8 @@ void loop() {
     lcd.setCursor(0, 1); lcd.print("T1: ");
     lcd.setCursor(0, 2); lcd.print("T2: ");
     lcd.setCursor(0, 3); lcd.print("S:");
-    lcd.setCursor(6, 3); lcd.print("M:");
-    lcd.setCursor(12, 3); lcd.print("B:");
+  lcd.setCursor(6, 3); lcd.print("M:");
+  lcd.setCursor(12, 3); lcd.print("M:");
     
     // Force initial values to display
     lcd.setCursor(8, 0); lcd.print((int)round(tempThermocoupleF));
@@ -958,7 +1057,7 @@ void loop() {
     lcd.setCursor(4, 2); lcd.print((int)round(tempThermistor2F));
     lcd.setCursor(2, 3); lcd.print((int)round(smokerTemp));
     lcd.setCursor(8, 3); lcd.print((int)round(meatDoneTemp));
-    lcd.setCursor(14, 3); lcd.print(meatTempMode ? "M" : "S");
+  lcd.setCursor(14, 3); lcd.print(meatTempMode ? "Meat" : "Smoker");
     
     // Update last values to match what we just displayed
     lastTempTC = (int)round(tempThermocoupleF);
