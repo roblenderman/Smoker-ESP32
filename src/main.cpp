@@ -18,6 +18,13 @@ int thermoCS = 5;   // CS
 int thermoDO = 19;  // MISO
 MAX6675 thermocouple(thermoCLK, thermoCS, thermoDO);
 
+// Thermocouple calibration offset (subtract from reading to correct)
+const float THERMOCOUPLE_OFFSET_F = 0.0; // °F offset to subtract (reads 7°F high)
+
+// Thermistor calibration offsets (adjust these based on your calibration tests)
+const float THERMISTOR1_OFFSET_F = 4.0; // °F offset for thermistor 1 (adjust as needed)
+const float THERMISTOR2_OFFSET_F = 4.0; // °F offset for thermistor 2 (adjust as needed)
+
 // I2C LCD (20x4)
 LiquidCrystal_I2C lcd(0x27, 20, 4); // I2C address 0x27, 20x4 LCD
 
@@ -26,18 +33,18 @@ const int relayPin = 16;
 
 // Voltage Divider (Thermistor 1)
 const int thermistorPin1 = 32; // ADC1
-const float R_FIXED1 = 9900.0; // 10kΩ
+const float R_FIXED1 = 12400.0; // 12.4kΩ
 const float V_IN = 3.3; // 3.3V
 const float R_25 = 110000.0; // 110kΩ at 25°C
 const float BETA = 4350.0; // Adjust if known
 
 // Voltage Divider (Thermistor 2)
 const int thermistorPin2 = 33; // ADC1
-const float R_FIXED2 = 9900.0; // 10kΩ
+const float R_FIXED2 = 12400.0; // 12.4kΩ
 
 // Moving average filters for temperature readings (smoothing)
-movingAvg thermistor1Filter(15);     // 10-sample moving average for thermistor 1
-movingAvg thermistor2Filter(15);     // 10-sample moving average for thermistor 2
+movingAvg thermistor1Filter(10);     // 10-sample moving average for thermistor 1
+movingAvg thermistor2Filter(10);     // 10-sample moving average for thermistor 2
 movingAvg thermocoupleFilter(8);     // 8-sample moving average for thermocouple (slightly less to maintain responsiveness)
 
 // Rotary Encoder Pins (updated - avoid GPIO 12 for boot issues)
@@ -347,9 +354,9 @@ void setup() {
     
     float tempThermocoupleF;
     if (validReadings > 0) {
-      tempThermocoupleF = thermocoupleFilter.reading(thermocoupleReading / validReadings) * 9.0 / 5.0 + 32.0;
+      tempThermocoupleF = (thermocoupleFilter.reading(thermocoupleReading / validReadings) * 9.0 / 5.0 + 32.0) - THERMOCOUPLE_OFFSET_F;
     } else {
-      tempThermocoupleF = thermocoupleFilter.reading(thermocouple.readCelsius()) * 9.0 / 5.0 + 32.0;
+      tempThermocoupleF = (thermocoupleFilter.reading(thermocouple.readCelsius()) * 9.0 / 5.0 + 32.0) - THERMOCOUPLE_OFFSET_F;
     }
     int raw1 = 0;
     for (int i = 0; i < 20; i++) {  // Increased from 10 to 20 samples
@@ -360,7 +367,7 @@ void setup() {
     float vOut1 = (raw1 / 4095.0) * V_IN;
     float rThermistor1 = (vOut1 * R_FIXED1) / (V_IN - vOut1);
     if (rThermistor1 <= 0) rThermistor1 = 1.0; // Prevent invalid resistance
-    float tempThermistor1F = calculateTemp(rThermistor1);
+    float tempThermistor1F = calculateTemp(rThermistor1) - THERMISTOR1_OFFSET_F;
 
     int raw2 = 0;
     for (int i = 0; i < 20; i++) {  // Increased from 10 to 20 samples
@@ -371,7 +378,7 @@ void setup() {
     float vOut2 = (raw2 / 4095.0) * V_IN;
     float rThermistor2 = (vOut2 * R_FIXED2) / (V_IN - vOut2);
     if (rThermistor2 <= 0) rThermistor2 = 1.0; // Prevent invalid resistance
-    float tempThermistor2F = calculateTemp(rThermistor2);
+    float tempThermistor2F = calculateTemp(rThermistor2) - THERMISTOR2_OFFSET_F;
 
     html.replace("%TC_TEMP%", String((int)round(tempThermocoupleF)));
     html.replace("%T1_TEMP%", String((int)round(tempThermistor1F)));
@@ -600,7 +607,7 @@ void loop() {
     tempThermocouple = thermocoupleFilter.reading(thermocouple.readCelsius());
   }
   
-  float tempThermocoupleF = tempThermocouple * 9.0 / 5.0 + 32.0;
+  float tempThermocoupleF = (tempThermocouple * 9.0 / 5.0 + 32.0) - THERMOCOUPLE_OFFSET_F;
 
   // Read thermistor 1 (20 samples + moving average for improved accuracy)
   int raw1 = 0;
@@ -616,7 +623,22 @@ void loop() {
   float vOut1 = (filteredRaw1 / 4095.0) * V_IN;
   float rThermistor1 = (vOut1 * R_FIXED1) / (V_IN - vOut1);
   if (rThermistor1 <= 0) rThermistor1 = 1.0; // Prevent invalid resistance
-  float tempThermistor1F = calculateTemp(rThermistor1);
+  float tempThermistor1F = calculateTemp(rThermistor1) - THERMISTOR1_OFFSET_F;
+
+  // Debug output for thermistor diagnostics
+  static unsigned long lastDebugTime = 0;
+  if (currentTime - lastDebugTime > 5000) { // Every 5 seconds
+    Serial.print("T1 Raw: ");
+    Serial.print(raw1);
+    Serial.print(" (");
+    Serial.print(vOut1, 3);
+    Serial.print("V) R: ");
+    Serial.print(rThermistor1, 0);
+    Serial.print("Ω Temp: ");
+    Serial.print(tempThermistor1F, 1);
+    Serial.print("°F | ");
+    lastDebugTime = currentTime;
+  }
 
   // Read thermistor 2 (20 samples + moving average for improved accuracy)
   int raw2 = 0;
@@ -632,7 +654,20 @@ void loop() {
   float vOut2 = (filteredRaw2 / 4095.0) * V_IN;
   float rThermistor2 = (vOut2 * R_FIXED2) / (V_IN - vOut2);
   if (rThermistor2 <= 0) rThermistor2 = 1.0; // Prevent invalid resistance
-  float tempThermistor2F = calculateTemp(rThermistor2);
+  float tempThermistor2F = calculateTemp(rThermistor2) - THERMISTOR2_OFFSET_F;
+
+  // Complete debug output for thermistor 2
+  if (currentTime - lastDebugTime <= 100) { // Same 5-second window as T1
+    Serial.print("T2 Raw: ");
+    Serial.print(raw2);
+    Serial.print(" (");
+    Serial.print(vOut2, 3);
+    Serial.print("V) R: ");
+    Serial.print(rThermistor2, 0);
+    Serial.print("Ω Temp: ");
+    Serial.print(tempThermistor2F, 1);
+    Serial.println("°F");
+  }
 
   // Send data to Teleplot for real-time visualization
   static unsigned long lastTeleplotTime = 0;
