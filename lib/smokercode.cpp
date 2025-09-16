@@ -53,13 +53,11 @@ const int ROTARY_ENCODER_A_PIN = 13;  // Back to 13 for wiring check
 const int ROTARY_ENCODER_B_PIN = 14;  // Swapped with A pin to fix backwards response
 const int ROTARY_ENCODER_BUTTON_PIN = 25;
 const int ROTARY_ENCODER_VCC_PIN = -1; // Not used
-const int ROTARY_ENCODER_STEPS = 4;
+const int ROTARY_ENCODER_STEPS = 1;
 
 AiEsp32RotaryEncoder rotaryEncoder(ROTARY_ENCODER_A_PIN, ROTARY_ENCODER_B_PIN, ROTARY_ENCODER_BUTTON_PIN, ROTARY_ENCODER_VCC_PIN, ROTARY_ENCODER_STEPS, false); // false = use pullup resistors
 
-void IRAM_ATTR readEncoderISR() {
-  rotaryEncoder.readEncoder_ISR();
-}
+// No custom encoder ISR or flag needed
 
 // Smoker and meat setpoints
 float smokerTemp = 250.0; // °F, initial setpoint
@@ -178,15 +176,25 @@ void setup() {
   Serial.begin(115200);
 
   // Initialize Rotary Encoder BEFORE WiFi to avoid interrupt conflicts
-  pinMode(ROTARY_ENCODER_A_PIN, INPUT_PULLUP);
-  pinMode(ROTARY_ENCODER_B_PIN, INPUT_PULLUP);
   rotaryEncoder.begin();
-  rotaryEncoder.setup(readEncoderISR, readEncoderISR);
+  rotaryEncoder.isButtonPulldown = false; // Use pullup for button
+  rotaryEncoder.setup(nullptr, nullptr); // No ISRs for library
   rotaryEncoder.setBoundaries(SMOKER_TEMP_MIN, SMOKER_TEMP_MAX, false);
-  rotaryEncoder.setAcceleration(0);
+  rotaryEncoder.setAcceleration(250);
+
+  // Set initial encoder value to match current smoker temp
   rotaryEncoder.setEncoderValue(smokerTemp);
-  attachInterrupt(digitalPinToInterrupt(ROTARY_ENCODER_A_PIN), readEncoderISR, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(ROTARY_ENCODER_B_PIN), readEncoderISR, CHANGE);
+
+  // Attach interrupts for rotary encoder pins with proper error handling
+    // Enable ESP32 internal pull-up resistors for encoder pins
+    pinMode(ROTARY_ENCODER_A_PIN, INPUT_PULLUP);
+    pinMode(ROTARY_ENCODER_B_PIN, INPUT_PULLUP);
+  if (digitalPinToInterrupt(ROTARY_ENCODER_A_PIN) != NOT_AN_INTERRUPT) {
+    attachInterrupt(digitalPinToInterrupt(ROTARY_ENCODER_A_PIN), [](){ rotaryEncoder.readEncoder_ISR(); }, CHANGE);
+  }
+  if (digitalPinToInterrupt(ROTARY_ENCODER_B_PIN) != NOT_AN_INTERRUPT) {
+    attachInterrupt(digitalPinToInterrupt(ROTARY_ENCODER_B_PIN), [](){ rotaryEncoder.readEncoder_ISR(); }, CHANGE);
+  }
   
   // Allow time for encoder to stabilize
   delay(100);
@@ -491,19 +499,29 @@ void loop() {
     Serial.print(" (delta: ");
     Serial.print(delta);
     Serial.println(")");
-    
-    // Sync encoder value with smoker temp if they don't match
-    if (!meatTempMode) {
-      smokerTemp = currentEncoderValue;
-      smokerTemp = constrain(smokerTemp, SMOKER_TEMP_MIN, SMOKER_TEMP_MAX);
-      Serial.print("New smoker temperature setpoint: ");
-      Serial.println(smokerTemp);
-    } else {
-      // For meat temp mode, encoder value directly sets meat temperature
-      meatDoneTemp = currentEncoderValue;
+    // Adjust temperature based on rotation and current mode
+    if (meatTempMode) {
+      if (delta > 0) {
+        meatDoneTemp += 5.0;
+        Serial.println("Meat target temperature increased by 5°F");
+      } else {
+        meatDoneTemp -= 5.0;
+        Serial.println("Meat target temperature decreased by 5°F");
+      }
       meatDoneTemp = constrain(meatDoneTemp, 100.0, 200.0);
       Serial.print("New meat target temperature: ");
       Serial.println(meatDoneTemp);
+    } else {
+      if (delta > 0) {
+        smokerTemp += 5.0;
+        Serial.println("Smoker temperature increased by 5°F");
+      } else {
+        smokerTemp -= 5.0;
+        Serial.println("Smoker temperature decreased by 5°F");
+      }
+      smokerTemp = constrain(smokerTemp, 100.0, 400.0);
+      Serial.print("New smoker temperature setpoint: ");
+      Serial.println(smokerTemp);
     }
     updateLCD = true;
     lastEncoderValue = currentEncoderValue;
@@ -791,18 +809,9 @@ void loop() {
       lastButtonPressTime = currentTime;
       buttonProcessed = true;
       
-      // Sync encoder value with the new mode's temperature
-      if (meatTempMode) {
-        rotaryEncoder.setEncoderValue((long)meatDoneTemp);
-      } else {
-        rotaryEncoder.setEncoderValue((long)smokerTemp);
-      }
-      
       // Debug output to serial
       Serial.print("DIRECT BUTTON PRESS! Mode changed to: ");
       Serial.println(meatTempMode ? "Meat Temp" : "Smoker Temp");
-      Serial.print("Encoder synced to: ");
-      Serial.println(meatTempMode ? (long)meatDoneTemp : (long)smokerTemp);
       
       // Send button press and mode change to Teleplot
       Serial.print(">button_pressed:");
