@@ -179,7 +179,8 @@ void setup() {
   Serial.begin(115200);
   Serial.println("ESP32 Starting - Debug Version");
 
-  // Initialize Rotary Encoder BEFORE WiFi to avoid interrupt conflicts
+  // TEMPORARILY DISABLED - Initialize Rotary Encoder BEFORE WiFi to avoid interrupt conflicts
+  /*
   pinMode(ROTARY_ENCODER_A_PIN, INPUT_PULLUP);
   pinMode(ROTARY_ENCODER_B_PIN, INPUT_PULLUP);
   rotaryEncoder.begin();
@@ -192,6 +193,7 @@ void setup() {
   
   // Allow time for encoder to stabilize
   delay(100);
+  */
   
   // Initialize moving average filters for thermistors and thermocouple
   thermistor1Filter.begin();
@@ -471,7 +473,7 @@ void loop() {
   unsigned long currentTime = millis();
   
   // Test encoder GPIO pins (remove this line once encoder is working)
-  testEncoderGPIO();
+  // testEncoderGPIO();  // COMMENTED OUT - causing boot crashes due to uninitialized encoder
   
   // DEBUG: Simple proof this code runs
   static unsigned long debugCounter = 0;
