@@ -902,7 +902,7 @@ void loop() {
   int currentTempTC = (int)round(tempThermocoupleF);
   if (currentTempTC != lastTempTC) {
     lcd.setCursor(8, 0);  // Position after "Smoker: "
-    lcd.print("   ");     // Clear previous value (reduced to 3 spaces to make room for Power)
+    lcd.print("    ");     // Clear previous value (4 spaces to ensure complete clearing)
     lcd.setCursor(8, 0);
     lcd.print(currentTempTC);
     lastTempTC = currentTempTC;
@@ -1005,7 +1005,7 @@ void loop() {
 
   if (meatTempMode != lastMode) {
     lcd.setCursor(14, 3);  // Position after "M:"
-    lcd.print("       "); // Clear previous value (up to 7 chars)
+    lcd.print("      "); // Clear previous value (up to 7 chars)
     lcd.setCursor(14, 3);
     lcd.print(meatTempMode ? "Meat" : "Smoker");
     lastMode = meatTempMode;
