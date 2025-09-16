@@ -7,7 +7,6 @@
 #include <AsyncTCP.h>
 #include <AiEsp32RotaryEncoder.h>
 #include <movingAvg.h>  // Moving average library for filtering
-#include <ArduinoOTA.h> // Include ArduinoOTA library
 
 // Wi-Fi credentials
 const char* ssid = "LHome";
@@ -462,17 +461,9 @@ void setup() {
   // Teleplot uses Serial output - no special initialization needed
   Serial.println("Setup complete - Teleplot ready via Serial Monitor");
   Serial.println("Install Teleplot extension in VS Code and connect to Serial port");
-
-  // OTA setup
-  ArduinoOTA.setHostname("esp32-smoker"); // Optional: set a custom hostname
-  // ArduinoOTA.setPassword("yourpassword"); // Optional: set a password
-  ArduinoOTA.begin();
-  Serial.println("OTA Ready");
 }
 
 void loop() {
-  ArduinoOTA.handle();
-  
   unsigned long currentTime = millis();
   
   // Test encoder GPIO pins (remove this line once encoder is working)
