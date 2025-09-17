@@ -7,6 +7,7 @@
 #include <AsyncTCP.h>
 #include <AiEsp32RotaryEncoder.h>
 #include <movingAvg.h>  // Moving average library for filtering
+#include <ArduinoOTA.h> // Include ArduinoOTA library
 
 // Wi-Fi credentials
 const char* ssid = "LHome";
@@ -233,10 +234,10 @@ void setup() {
   WiFi.setSleep(false);
   
   // Set static IP to reduce DHCP issues (optional)
-  // IPAddress local_IP(192, 168, 1, 100);
-  // IPAddress gateway(192, 168, 1, 1);
-  // IPAddress subnet(255, 255, 255, 0);
-  // WiFi.config(local_IP, gateway, subnet);
+  IPAddress local_IP(192, 168, 1, 225);
+  IPAddress gateway(192, 168, 1, 1);
+  IPAddress subnet(255, 255, 255, 0);
+  WiFi.config(local_IP, gateway, subnet);
   
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi...");
@@ -280,6 +281,15 @@ void setup() {
     
     Serial.print("MAC Address: ");
     Serial.println(WiFi.macAddress());
+    
+    // Initialize OTA with standard ESP32 ArduinoOTA
+    ArduinoOTA.setHostname("esp32-smoker");
+    ArduinoOTA.setPort(3232);
+    ArduinoOTA.begin();
+    Serial.print("OTA Ready - Use IP address: ");
+    Serial.println(WiFi.localIP());
+    Serial.print("OTA Hostname: esp32-smoker, ");
+    Serial.println("OTA Port: 3232");
   } else {
     Serial.println("\nFailed to connect to WiFi!");
   }
@@ -461,6 +471,8 @@ void setup() {
 }
 
 void loop() {
+  ArduinoOTA.handle();  // Handle OTA updates
+  
   unsigned long currentTime = millis();
   
   // Test encoder GPIO pins (remove this line once encoder is working)
