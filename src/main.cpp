@@ -8,10 +8,15 @@
 #include <AiEsp32RotaryEncoder.h>
 #include <movingAvg.h>  // Moving average library for filtering
 #include <ArduinoOTA.h> // Include ArduinoOTA library
+#include <ArduPID.h>    // Arduino PID library
 
 // Wi-Fi credentials
 const char* ssid = "LHome";
 const char* password = "stacey8561";
+
+// Telnet server for wireless serial monitoring
+WiFiServer telnetServer(23);
+WiFiClient telnetClient;
 
 // Thermocouple (SPI)
 int thermoCLK = 18; // SCLK
@@ -29,7 +34,7 @@ const float THERMISTOR2_OFFSET_F = 4.0; // °F offset for thermistor 2 (adjust a
 // I2C LCD (20x4)
 LiquidCrystal_I2C lcd(0x27, 20, 4); // I2C address 0x27, 20x4 LCD
 
-// Relay (SLA-05VDC-SL-C, low-level trigger)
+// Relay Control Pin (high-level trigger)
 const int relayPin = 16;
 
 // Voltage Divider (Thermistor 1)
@@ -82,15 +87,13 @@ unsigned long lastPredictionSampleTime = 0;
 float lastMeatTempPredictionMinutes = -1;
 bool predictionValid = false;
 
-// PID parameters
-const float Kp = 7.0;
-const float Ki = 0.1;
-const float Kd = 100.0;
-float integral = 0.0;
-float prevError = 0.0;
-const float WINDOW_SIZE = 10000; // 10s window in ms
+// PID parameters and variables
+double pidSetpoint, pidInput, pidOutput;
+double Kp = 7.0, Ki = 0.1, Kd = 20.0;
+ArduPID myPID;
+
+const float WINDOW_SIZE = 30000; // 30s window in ms (used for proportional calculation)
 unsigned long windowStartTime = 0;
-unsigned long lastPidTime = 0;  // Track last PID update time
 bool relayState = false;
 float pidOutputPercent = 0.0; // Current PID output percentage (0-100)
 
@@ -103,6 +106,10 @@ bool meatTempMode = false;
 
 // Web server
 AsyncWebServer server(80);
+
+// Function declarations
+void debugPrint(String message);
+void debugPrintln(String message);
 
 float calculateTemp(float r) {
   float t25 = 298.15; // 25°C in Kelvin
@@ -158,14 +165,14 @@ void testEncoderGPIO() {
     static long lastEnc = 0;
     
     if (pinA != lastA || pinB != lastB || pinBtn != lastBtn || encoderValue != lastEnc) {
-      Serial.print("GPIO Change - A:");
-      Serial.print(pinA ? "H" : "L");
-      Serial.print(" B:");
-      Serial.print(pinB ? "H" : "L");
-      Serial.print(" Btn:");
-      Serial.print(pinBtn ? "H" : "L");
-      Serial.print(" Enc:");
-      Serial.println(encoderValue);
+      debugPrint("GPIO Change - A:");
+      debugPrint(pinA ? "H" : "L");
+      debugPrint(" B:");
+      debugPrint(pinB ? "H" : "L");
+      debugPrint(" Btn:");
+      debugPrint(pinBtn ? "H" : "L");
+      debugPrint(" Enc:");
+      debugPrintln(String(encoderValue));
       
       lastA = pinA;
       lastB = pinB;
@@ -175,9 +182,28 @@ void testEncoderGPIO() {
   }
 }
 
+// Helper function for dual output to Serial and Telnet
+void debugPrint(String message) {
+  Serial.print(message);
+  if (telnetClient && telnetClient.connected()) {
+    telnetClient.print(message);
+    telnetClient.flush();
+  }
+}
+
+void debugPrintln(String message) {
+  Serial.println(message);
+  if (telnetClient && telnetClient.connected()) {
+    telnetClient.println(message);
+    telnetClient.flush();
+  }
+}
+
+
+
 void setup() {
   Serial.begin(115200);
-  Serial.println("ESP32 Starting - Debug Version");
+  debugPrintln("ESP32 Starting - Debug Version");
 
   // Initialize Rotary Encoder BEFORE WiFi to avoid interrupt conflicts
   pinMode(ROTARY_ENCODER_A_PIN, INPUT_PULLUP);
@@ -197,30 +223,30 @@ void setup() {
   thermistor1Filter.begin();
   thermistor2Filter.begin();
   thermocoupleFilter.begin();
-  Serial.println("Moving average filters initialized");
+  debugPrintln("Moving average filters initialized");
   
-  Serial.println("Rotary encoder initialized");
+  debugPrintln("Rotary encoder initialized");
   
   // Test encoder GPIO pins during startup
-  Serial.println("=== ENCODER GPIO TEST ===");
+  debugPrintln("=== ENCODER GPIO TEST ===");
   for (int i = 0; i < 10; i++) {
     bool pinA = digitalRead(ROTARY_ENCODER_A_PIN);
     bool pinB = digitalRead(ROTARY_ENCODER_B_PIN);
     bool pinBtn = digitalRead(ROTARY_ENCODER_BUTTON_PIN);
-    Serial.print("Test ");
-    Serial.print(i);
-    Serial.print(": A=");
-    Serial.print(pinA ? "H" : "L");
-    Serial.print(", B=");
-    Serial.print(pinB ? "H" : "L");
-    Serial.print(", Btn=");
-    Serial.print(pinBtn ? "H" : "L");
-    Serial.print(", Encoder=");
-    Serial.println(rotaryEncoder.readEncoder());
+    debugPrint("Test ");
+    debugPrint(String(i));
+    debugPrint(": A=");
+    debugPrint(pinA ? "H" : "L");
+    debugPrint(", B=");
+    debugPrint(pinB ? "H" : "L");
+    debugPrint(", Btn=");
+    debugPrint(pinBtn ? "H" : "L");
+    debugPrint(", Encoder=");
+    debugPrintln(String(rotaryEncoder.readEncoder()));
     delay(100);
   }
-  Serial.println("=== END GPIO TEST ===");
-  Serial.println("Try turning encoder now and watch for GPIO changes...");
+  debugPrintln("=== END GPIO TEST ===");
+  debugPrintln("Try turning encoder now and watch for GPIO changes...");
 
   // Initialize I2C
   Wire.begin(21, 22); // SDA GPIO21, SCL GPIO22
@@ -240,19 +266,19 @@ void setup() {
   WiFi.config(local_IP, gateway, subnet);
   
   WiFi.begin(ssid, password);
-  Serial.print("Connecting to WiFi...");
+  debugPrint("Connecting to WiFi...");
   int wifi_retry = 0;
   while (WiFi.status() != WL_CONNECTED && wifi_retry < 30) {
     delay(1000);
-    Serial.print(".");
+    debugPrint(".");
     wifi_retry++;
     
     // If taking too long, try reconnecting
     if (wifi_retry % 10 == 0) {
-      Serial.println();
-      Serial.print("Retry attempt ");
-      Serial.print(wifi_retry / 10);
-      Serial.print(" - Reconnecting...");
+      debugPrintln("");
+      debugPrint("Retry attempt ");
+      debugPrint(String(wifi_retry / 10));
+      debugPrint(" - Reconnecting...");
       WiFi.disconnect();
       delay(1000);
       WiFi.begin(ssid, password);
@@ -260,38 +286,43 @@ void setup() {
   }
   
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nConnected to WiFi");
-    Serial.print("IP Address: ");
-    Serial.println(WiFi.localIP());
-    Serial.print("Signal Strength: ");
-    Serial.print(WiFi.RSSI());
-    Serial.println(" dBm");
+    debugPrintln("\nConnected to WiFi");
+    debugPrint("IP Address: ");
+    debugPrintln(WiFi.localIP().toString());
+    debugPrint("Signal Strength: ");
+    debugPrint(String(WiFi.RSSI()));
+    debugPrintln(" dBm");
     
     // Determine WiFi band based on channel
     int channel = WiFi.channel();
-    Serial.print("Channel: ");
-    Serial.print(channel);
+    debugPrint("Channel: ");
+    debugPrint(String(channel));
     if (channel >= 1 && channel <= 14) {
-      Serial.println(" (2.4GHz band)");
+      debugPrintln(" (2.4GHz band)");
     } else if (channel >= 36 && channel <= 165) {
-      Serial.println(" (5GHz band)");
+      debugPrintln(" (5GHz band)");
     } else {
-      Serial.println(" (Unknown band)");
+      debugPrintln(" (Unknown band)");
     }
     
-    Serial.print("MAC Address: ");
-    Serial.println(WiFi.macAddress());
+    debugPrint("MAC Address: ");
+    debugPrintln(WiFi.macAddress());
     
     // Initialize OTA with standard ESP32 ArduinoOTA
     ArduinoOTA.setHostname("esp32-smoker");
     ArduinoOTA.setPort(3232);
     ArduinoOTA.begin();
-    Serial.print("OTA Ready - Use IP address: ");
-    Serial.println(WiFi.localIP());
-    Serial.print("OTA Hostname: esp32-smoker, ");
-    Serial.println("OTA Port: 3232");
+    debugPrint("OTA Ready - Use IP address: ");
+    debugPrintln(WiFi.localIP().toString());
+    debugPrint("OTA Hostname: esp32-smoker, ");
+    debugPrintln("OTA Port: 3232");
+    
+    // Start telnet server for wireless serial monitoring
+    telnetServer.begin();
+    debugPrint("Telnet server started on port 23 - Connect to: ");
+    debugPrintln(WiFi.localIP().toString());
   } else {
-    Serial.println("\nFailed to connect to WiFi!");
+    debugPrintln("\nFailed to connect to WiFi!");
   }
 
   // Initialize LCD
@@ -313,16 +344,21 @@ void setup() {
   
   delay(5000); // Show IP and MAC for 5s
 
-  // Initialize Relay
+  // Initialize Relay Control Pin (high-level trigger)
   pinMode(relayPin, OUTPUT);
-  digitalWrite(relayPin, HIGH); // Relay off
+  digitalWrite(relayPin, LOW); // Start with LOW (relay OFF)
+  debugPrintln("Relay control pin initialized - HIGH=ON, LOW=OFF");
 
   // Set ADC attenuation
   analogSetAttenuation(ADC_11db);
 
-  // Initialize PID timing
+  // Initialize PID controller
+  pidSetpoint = smokerTemp;
+  myPID.begin(&pidInput, &pidOutput, &pidSetpoint, Kp, Ki, Kd);
+  myPID.setOutputLimits(0, 100); // PID output 0-100%
+  myPID.setWindUpLimits(-50, 50); // Prevent integral windup, limit to ±50% of output range
+  myPID.setSampleTime(1000); // 1 second sample time
   windowStartTime = millis();
-  lastPidTime = millis();
 
   // Setup web server
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -434,7 +470,7 @@ void setup() {
     if (smokerTemp > SMOKER_TEMP_MAX) {
       smokerTemp = SMOKER_TEMP_MAX;
     }
-    integral = 0.0; // Reset integral
+    myPID.reset(); // Reset PID integral
     request->redirect("/");
   });
 
@@ -443,7 +479,7 @@ void setup() {
     if (smokerTemp < SMOKER_TEMP_MIN) {
       smokerTemp = SMOKER_TEMP_MIN;
     }
-    integral = 0.0; // Reset integral
+    myPID.reset(); // Reset PID integral
     request->redirect("/");
   });
 
@@ -466,24 +502,45 @@ void setup() {
   server.begin();
   
   // Teleplot uses Serial output - no special initialization needed
-  Serial.println("Setup complete - Teleplot ready via Serial Monitor");
-  Serial.println("Install Teleplot extension in VS Code and connect to Serial port");
+  debugPrintln("Setup complete - Teleplot ready via Serial Monitor");
+  debugPrintln("Install Teleplot extension in VS Code and connect to Serial port");
 }
 
 void loop() {
   ArduinoOTA.handle();  // Handle OTA updates
+  
+  // Handle telnet connections for wireless serial monitoring
+  if (telnetServer.hasClient()) {
+    if (telnetClient && telnetClient.connected()) {
+      telnetClient.stop(); // Disconnect previous client
+    }
+    telnetClient = telnetServer.available();
+    if (telnetClient) {
+      telnetClient.println("Connected to ESP32 Smoker Controller");
+      telnetClient.print("IP: ");
+      telnetClient.println(WiFi.localIP());
+      telnetClient.flush();
+    }
+  }
   
   unsigned long currentTime = millis();
   
   // Test encoder GPIO pins (remove this line once encoder is working)
   testEncoderGPIO();
   
-  // DEBUG: Simple proof this code runs
+  // Periodic telnet test message
+  static unsigned long lastTelnetTest = 0;
+  if (currentTime - lastTelnetTest > 5000) { // Every 5 seconds
+    debugPrintln("Telnet test - " + String(millis()) + "ms uptime");
+    debugPrintln("WiFi Signal: " + String(WiFi.RSSI()) + " dBm");
+    debugPrintln("Free Heap: " + String(ESP.getFreeHeap()) + " bytes");
+    lastTelnetTest = currentTime;
+  }
   static unsigned long debugCounter = 0;
   debugCounter++;
   if (debugCounter % 1000 == 0) {  // Print every 1000 loops
-    Serial.print("DEBUG: Encoder check loop #");
-    Serial.println(debugCounter);
+    debugPrint("DEBUG: Encoder check loop #");
+    debugPrintln(String(debugCounter));
   }
   
   // Rotary encoder handling - check for changes
@@ -492,26 +549,26 @@ void loop() {
   // Check for encoder rotation
   if (currentEncoderValue != lastEncoderValue) {
     int delta = currentEncoderValue - lastEncoderValue;
-    Serial.print("Encoder changed from ");
-    Serial.print(lastEncoderValue);
-    Serial.print(" to ");
-    Serial.print(currentEncoderValue);
-    Serial.print(" (delta: ");
-    Serial.print(delta);
-    Serial.println(")");
+    debugPrint("Encoder changed from ");
+    debugPrint(String(lastEncoderValue));
+    debugPrint(" to ");
+    debugPrint(String(currentEncoderValue));
+    debugPrint(" (delta: ");
+    debugPrint(String(delta));
+    debugPrintln(")");
     
     // Sync encoder value with smoker temp if they don't match
     if (!meatTempMode) {
       smokerTemp = currentEncoderValue;
       smokerTemp = constrain(smokerTemp, SMOKER_TEMP_MIN, SMOKER_TEMP_MAX);
-      Serial.print("New smoker temperature setpoint: ");
-      Serial.println(smokerTemp);
+      debugPrint("New smoker temperature setpoint: ");
+      debugPrintln(String(smokerTemp));
     } else {
       // For meat temp mode, encoder value directly sets meat temperature
       meatDoneTemp = currentEncoderValue;
       meatDoneTemp = constrain(meatDoneTemp, 100.0, 200.0);
-      Serial.print("New meat target temperature: ");
-      Serial.println(meatDoneTemp);
+      debugPrint("New meat target temperature: ");
+      debugPrintln(String(meatDoneTemp));
     }
     updateLCD = true;
     lastEncoderValue = currentEncoderValue;
@@ -519,7 +576,7 @@ void loop() {
   
   // Check for encoder button press
   if (rotaryEncoder.isEncoderButtonClicked()) {
-    Serial.println("Encoder button clicked!");
+    debugPrintln("Encoder button clicked!");
     // You can add mode switching or other button functionality here
   }
 
@@ -530,14 +587,14 @@ void loop() {
   
   if (currentTime - lastWifiCheck > 5000) { // Check every 5 seconds
     if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("WiFi disconnected! Attempting reconnection...");
+      debugPrintln("WiFi disconnected! Attempting reconnection...");
       disconnectCount++;
       lastWifiDisconnect = currentTime;
       
       // Log signal strength before reconnecting
-      Serial.print("Last RSSI: ");
-      Serial.print(WiFi.RSSI());
-      Serial.println(" dBm");
+      debugPrint("Last RSSI: ");
+      debugPrint(String(WiFi.RSSI()));
+      debugPrintln(" dBm");
       
       // Try different reconnection strategies
       if (disconnectCount % 3 == 1) {
@@ -562,37 +619,37 @@ void loop() {
       while (WiFi.status() != WL_CONNECTED && retry_count < 40) {
         delay(250);  // Reduced from 500ms to 250ms
         retry_count++;
-        if (retry_count % 4 == 0) Serial.print(".");  // Print less frequently
+        if (retry_count % 4 == 0) debugPrint(".");  // Print less frequently
       }
       
       if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("\nReconnected to WiFi!");
-        Serial.print("New IP: ");
-        Serial.println(WiFi.localIP());
-        Serial.print("Signal: ");
-        Serial.print(WiFi.RSSI());
-        Serial.println(" dBm");
+        debugPrintln("\nReconnected to WiFi!");
+        debugPrint("New IP: ");
+        debugPrintln(WiFi.localIP().toString());
+        debugPrint("Signal: ");
+        debugPrint(String(WiFi.RSSI()));
+        debugPrintln(" dBm");
         
         // Show which band we reconnected to
         int channel = WiFi.channel();
-        Serial.print("Channel: ");
-        Serial.print(channel);
+        debugPrint("Channel: ");
+        debugPrint(String(channel));
         if (channel >= 1 && channel <= 14) {
-          Serial.println(" (2.4GHz)");
+          debugPrintln(" (2.4GHz)");
         } else if (channel >= 36 && channel <= 165) {
-          Serial.println(" (5GHz)");
+          debugPrintln(" (5GHz)");
         } else {
-          Serial.println(" (Unknown)");
+          debugPrintln(" (Unknown)");
         }
       } else {
-        Serial.println("\nFailed to reconnect!");
+        debugPrintln("\nFailed to reconnect!");
         return; // Skip this loop iteration
       }
     } else {
       // WiFi is connected, reset disconnect counter
       if (disconnectCount > 0) {
-        Serial.print("WiFi stable. Total disconnects since boot: ");
-        Serial.println(disconnectCount);
+        debugPrint("WiFi stable. Total disconnects since boot: ");
+        debugPrintln(String(disconnectCount));
         disconnectCount = 0;
       }
     }
@@ -647,15 +704,15 @@ void loop() {
   // Debug output for thermistor diagnostics
   static unsigned long lastDebugTime = 0;
   if (currentTime - lastDebugTime > 5000) { // Every 5 seconds
-    Serial.print("T1 Raw: ");
-    Serial.print(raw1);
-    Serial.print(" (");
-    Serial.print(vOut1, 3);
-    Serial.print("V) R: ");
-    Serial.print(rThermistor1, 0);
-    Serial.print("Ω Temp: ");
-    Serial.print(tempThermistor1F, 1);
-    Serial.print("°F | ");
+    debugPrint("T1 Raw: ");
+    debugPrint(String(raw1));
+    debugPrint(" (");
+    debugPrint(String(vOut1, 3));
+    debugPrint("V) R: ");
+    debugPrint(String(rThermistor1, 0));
+    debugPrint("Ω Temp: ");
+    debugPrint(String(tempThermistor1F, 1));
+    debugPrint("°F | ");
     lastDebugTime = currentTime;
   }
 
@@ -677,37 +734,37 @@ void loop() {
 
   // Complete debug output for thermistor 2
   if (currentTime - lastDebugTime <= 100) { // Same 5-second window as T1
-    Serial.print("T2 Raw: ");
-    Serial.print(raw2);
-    Serial.print(" (");
-    Serial.print(vOut2, 3);
-    Serial.print("V) R: ");
-    Serial.print(rThermistor2, 0);
-    Serial.print("Ω Temp: ");
-    Serial.print(tempThermistor2F, 1);
-    Serial.println("°F");
+    debugPrint("T2 Raw: ");
+    debugPrint(String(raw2));
+    debugPrint(" (");
+    debugPrint(String(vOut2, 3));
+    debugPrint("V) R: ");
+    debugPrint(String(rThermistor2, 0));
+    debugPrint("Ω Temp: ");
+    debugPrint(String(tempThermistor2F, 1));
+    debugPrintln("°F");
   }
 
   // Send data to Teleplot for real-time visualization
   static unsigned long lastTeleplotTime = 0;
   if (currentTime - lastTeleplotTime > 1000) { // Send every 1 second
     // Teleplot format: >variableName:value
-    Serial.print(">thermocouple:");
-    Serial.println(tempThermocoupleF);
-    Serial.print(">thermistor1:");
-    Serial.println(tempThermistor1F);
-    Serial.print(">thermistor2:");
-    Serial.println(tempThermistor2F);
-    Serial.print(">smoker_setpoint:");
-    Serial.println(smokerTemp);
-    Serial.print(">meat_target:");
-    Serial.println(meatDoneTemp);
+    debugPrint(">thermocouple:");
+    debugPrintln(String(tempThermocoupleF));
+    debugPrint(">thermistor1:");
+    debugPrintln(String(tempThermistor1F));
+    debugPrint(">thermistor2:");
+    debugPrintln(String(tempThermistor2F));
+    debugPrint(">smoker_setpoint:");
+    debugPrintln(String(smokerTemp));
+    debugPrint(">meat_target:");
+    debugPrintln(String(meatDoneTemp));
     
     // Encoder and button state monitoring
-    Serial.print(">button_state:");
-    Serial.println(digitalRead(ROTARY_ENCODER_BUTTON_PIN) == LOW ? 1.0 : 0.0);
-    Serial.print(">current_mode:");
-    Serial.println(meatTempMode ? 1.0 : 0.0);  // 1 = meat mode, 0 = smoker mode
+    debugPrint(">button_state:");
+    debugPrintln(String(digitalRead(ROTARY_ENCODER_BUTTON_PIN) == LOW ? 1.0 : 0.0));
+    debugPrint(">current_mode:");
+    debugPrintln(String(meatTempMode ? 1.0 : 0.0));  // 1 = meat mode, 0 = smoker mode
     
     lastTeleplotTime = currentTime;
   }
@@ -750,16 +807,16 @@ void loop() {
   // Debug output for meat temp logic
   static unsigned long lastMeatDebugTime = 0;
   if (currentTime - lastMeatDebugTime > 5000) { // Every 5 seconds
-    Serial.print("Meat Temp Logic - T1: "); Serial.print(tempThermistor1F, 1);
-    Serial.print("°F (over target: "); Serial.print(diff1, 1); Serial.print("°F), T2: ");
-    Serial.print(tempThermistor2F, 1); Serial.print("°F (over target: "); Serial.print(diff2, 1);
-    Serial.print("°F), Target: "); Serial.print(meatDoneTemp, 1); Serial.println("°F");
+    debugPrint("Meat Temp Logic - T1: "); debugPrint(String(tempThermistor1F, 1));
+    debugPrint("°F (over target: "); debugPrint(String(diff1, 1)); debugPrint("°F), T2: ");
+    debugPrint(String(tempThermistor2F, 1)); debugPrint("°F (over target: "); debugPrint(String(diff2, 1));
+    debugPrint("°F), Target: "); debugPrint(String(meatDoneTemp, 1)); debugPrintln("°F");
     if (predictionValid) {
-      Serial.print("Estimated time to target: ");
-      Serial.print(lastMeatTempPredictionMinutes, 1);
-      Serial.println(" min");
+      debugPrint("Estimated time to target: ");
+      debugPrint(String(lastMeatTempPredictionMinutes, 1));
+      debugPrintln(" min");
     } else {
-      Serial.println("Estimated time to target: --");
+      debugPrintln("Estimated time to target: --");
     }
     lastMeatDebugTime = currentTime;
   }
@@ -768,11 +825,11 @@ void loop() {
   if ((diff1 >= -5.0) && (diff2 >= -5.0)) {
     static bool meatTempReached = false;
     if (!meatTempReached) {
-      Serial.println("*** MEAT TEMPERATURE REACHED! Setting smoker temp to meat temp ***");
+      debugPrintln("*** MEAT TEMPERATURE REACHED! Setting smoker temp to meat temp ***");
       meatTempReached = true;
     }
     smokerTemp = meatDoneTemp;
-    integral = 0.0; // Reset integral to stabilize at meatDoneTemp
+    myPID.reset(); // Reset PID integral to stabilize at meatDoneTemp
   }
 
   // Encoder Button Handling (mode switch) - using direct GPIO reading for reliability
@@ -807,16 +864,16 @@ void loop() {
       }
       
       // Debug output to serial
-      Serial.print("DIRECT BUTTON PRESS! Mode changed to: ");
-      Serial.println(meatTempMode ? "Meat Temp" : "Smoker Temp");
-      Serial.print("Encoder synced to: ");
-      Serial.println(meatTempMode ? (long)meatDoneTemp : (long)smokerTemp);
+      debugPrint("DIRECT BUTTON PRESS! Mode changed to: ");
+      debugPrintln(meatTempMode ? "Meat Temp" : "Smoker Temp");
+      debugPrint("Encoder synced to: ");
+      debugPrintln(String(meatTempMode ? (long)meatDoneTemp : (long)smokerTemp));
       
       // Send button press and mode change to Teleplot
-      Serial.print(">button_pressed:");
-      Serial.println(1.0);  // Spike to indicate button press
-      Serial.print(">mode_changed:");
-      Serial.println(meatTempMode ? 1.0 : 0.0);  // 1 = meat mode, 0 = smoker mode
+      debugPrint(">button_pressed:");
+      debugPrintln("1.0");  // Spike to indicate button press
+      debugPrint(">mode_changed:");
+      debugPrintln(meatTempMode ? "1.0" : "0.0");  // 1 = meat mode, 0 = smoker mode
     }
   }
   
@@ -825,79 +882,75 @@ void loop() {
 
   // No automatic exit from meatTempMode; mode is switched only by encoder button
 
-  // PID control
-  float error = smokerTemp - tempThermocoupleF;
-  unsigned long now = millis();
-  float dt = (now - lastPidTime) / 1000.0; // Time since last PID update
-  if (dt == 0) dt = 0.001; // Avoid division by zero, use small value
-  lastPidTime = now;
-
-  // Proportional
-  float P = Kp * error;
-
-  // Integral with anti-windup
-  integral += Ki * error * dt;
-  float output = P + integral;
-  if (output > 100.0) {
-    integral -= Ki * error * dt; // Undo integral update
-    output = 100.0;
-  } else if (output < 0.0) {
-    integral -= Ki * error * dt;
-    output = 0.0;
-  }
-
-  // Derivative
-  float D = Kd * (error - prevError) / dt;
-  prevError = error;
-
-  // Total PID output
-  output = P + integral + D;
-  if (output > 100.0) output = 100.0;
-  if (output < 0.0) output = 0.0;
+  // PID control using Arduino PID library
+  pidInput = tempThermocoupleF;
+  pidSetpoint = smokerTemp;
+  
+  myPID.compute();
   
   // Store PID output percentage for web display
-  pidOutputPercent = output;
+  pidOutputPercent = pidOutput;
 
   // Update Teleplot with PID control data
   static unsigned long lastPidTeleplotTime = 0;
   if (currentTime - lastPidTeleplotTime > 1000) { // Send every 1 second
-    Serial.print(">pid_output:");
-    Serial.println(output);
-    Serial.print(">pid_error:");
-    Serial.println(error);
-    Serial.print(">pid_P:");
-    Serial.println(P);
-    Serial.print(">pid_I:");
-    Serial.println(integral);
-    Serial.print(">pid_D:");
-    Serial.println(D);
+    double error = pidSetpoint - pidInput;
+    debugPrint(">pid_output:");
+    debugPrintln(String(pidOutput));
+    debugPrint(">pid_error:");
+    debugPrintln(String(error));
+    debugPrint(">pid_setpoint:");
+    debugPrintln(String(pidSetpoint));
+    debugPrint(">pid_input:");
+    debugPrintln(String(pidInput));
     lastPidTeleplotTime = currentTime;
   }
 
-  // Time-proportional relay control
-  float onTime = (output / 100.0) * WINDOW_SIZE; // ms
-  if (currentTime - windowStartTime <= onTime) {
-    digitalWrite(relayPin, LOW); // Relay on
-    relayState = true;
-  } else {
-    digitalWrite(relayPin, HIGH); // Relay off
-    relayState = false;
+  // Time-proportional relay control with enhanced debugging
+  float onTime = (pidOutput / 100.0) * WINDOW_SIZE; // ms
+  unsigned long windowElapsed = currentTime - windowStartTime;
+  bool shouldBeOn = (windowElapsed <= onTime);
+  
+  // Only change control state if needed (reduces unnecessary switching)
+  static bool lastControlState = false;
+  
+  if (shouldBeOn != lastControlState) {
+    if (shouldBeOn) {
+      digitalWrite(relayPin, HIGH); // Relay ON (HIGH for high-trigger relay)
+      relayState = true;
+      debugPrintln("HEATER: Turning ON (relay pin HIGH)");
+    } else {
+      digitalWrite(relayPin, LOW); // Relay OFF (LOW for high-trigger relay)
+      relayState = false;
+      debugPrintln("HEATER: Turning OFF (relay pin LOW)");
+    }
+    lastControlState = shouldBeOn;
   }
   
-  // Update Teleplot with relay state
+  // Update Teleplot with relay state and pin voltage verification
   static unsigned long lastRelayTeleplotTime = 0;
   if (currentTime - lastRelayTeleplotTime > 500) { // Send every 0.5 seconds for relay
-    Serial.print(">relay_state:");
-    Serial.println(relayState ? 100.0 : 0.0);
-    Serial.print(">relay_on_time_ms:");
-    Serial.println(onTime);
+    debugPrint(">relay_state:");
+    debugPrintln(String(relayState ? 100.0 : 0.0));
+    debugPrint(">relay_on_time_ms:");
+    debugPrintln(String(onTime));
+    debugPrint(">pid_output_percent:");
+    debugPrintln(String(pidOutput));
+    
+    debugPrint("Relay Control - PID: ");
+    debugPrint(String(pidOutput, 1));
+    debugPrint("%, State: ");
+    debugPrintln(relayState ? "ON" : "OFF");
+    
     lastRelayTeleplotTime = currentTime;
   }
 
-  // Reset window if time exceeds WINDOW_SIZE
-  if (currentTime - windowStartTime >= WINDOW_SIZE) {
-    windowStartTime = currentTime;
-    prevError = error; // Update prevError at window reset
+  // Reset window smoothly - only if we're past the window and relay should be off
+  if (windowElapsed >= WINDOW_SIZE) {
+    // Only reset if relay is currently off or should be off
+    if (!shouldBeOn || windowElapsed >= WINDOW_SIZE + 1000) { // Add 1 second grace period
+      windowStartTime = currentTime;
+    }
   }
 
   // Display on 20x4 LCD with optimized updates
@@ -921,7 +974,7 @@ void loop() {
   }
 
   // Update PID output on line 1, far right
-  int currentPidOutput = (int)round(output);
+  int currentPidOutput = (int)round(pidOutput);
   if (currentPidOutput != lastPidOutput) {
     lcd.setCursor(12, 0);  // Position after temperature value with some space
     lcd.print("        ");  // Clear previous value (8 spaces for "Pwr:XXX%")
@@ -1039,7 +1092,7 @@ void loop() {
     
     // Force initial values to display
     lcd.setCursor(8, 0); lcd.print((int)round(tempThermocoupleF));
-    lcd.setCursor(12, 0); lcd.print("Pwr:"); lcd.print((int)round(output)); lcd.print("%");
+    lcd.setCursor(12, 0); lcd.print("Pwr:"); lcd.print((int)round(pidOutput)); lcd.print("%");
     lcd.setCursor(4, 1); lcd.print((int)round(tempThermistor1F));
     lcd.setCursor(10, 1); lcd.print(getUptimeLCD());  // Moved to position 10
     lcd.setCursor(4, 2); lcd.print((int)round(tempThermistor2F));
@@ -1053,7 +1106,7 @@ void loop() {
     lastTemp2 = (int)round(tempThermistor2F);
     lastSmokerTemp = (int)round(smokerTemp);
     lastMeatTemp = (int)round(meatDoneTemp);
-    lastPidOutput = (int)round(output);
+    lastPidOutput = (int)round(pidOutput);
     lastMode = meatTempMode;
     lastUptime = getUptimeLCD();
     
@@ -1063,38 +1116,38 @@ void loop() {
  // lcd.print(relayState ? "ON" : "OFF");
 
   // Serial output
-  Serial.println("-------------------");
-  Serial.print("Thermocouple: "); Serial.print((int)round(tempThermocoupleF)); Serial.println(" F");
-  Serial.print("Thermistor 1: "); Serial.print((int)round(tempThermistor1F)); Serial.println(" F");
-  Serial.print("Thermistor 2: "); Serial.print((int)round(tempThermistor2F)); Serial.println(" F");
-  Serial.print("Smoker Setpoint: "); Serial.print((int)round(smokerTemp)); Serial.println(" F");
-  Serial.print("Meat Done Temp: "); Serial.print(meatDoneTemp); Serial.println(" F");
-  Serial.print("Mode: "); Serial.println(meatTempMode ? "Meat Temp" : "Smoker Temp");
-  Serial.print("Button State: "); 
+  debugPrintln("-------------------");
+  debugPrint("Thermocouple: "); debugPrint(String((int)round(tempThermocoupleF))); debugPrintln(" F");
+  debugPrint("Thermistor 1: "); debugPrint(String((int)round(tempThermistor1F))); debugPrintln(" F");
+  debugPrint("Thermistor 2: "); debugPrint(String((int)round(tempThermistor2F))); debugPrintln(" F");
+  debugPrint("Smoker Setpoint: "); debugPrint(String((int)round(smokerTemp))); debugPrintln(" F");
+  debugPrint("Meat Done Temp: "); debugPrint(String(meatDoneTemp)); debugPrintln(" F");
+  debugPrint("Mode: "); debugPrintln(meatTempMode ? "Meat Temp" : "Smoker Temp");
+  debugPrint("Button State: "); 
   ButtonState libraryButtonState = rotaryEncoder.readButtonState();
   switch(libraryButtonState) {
-    case BUT_DOWN: Serial.print("DOWN"); break;
-    case BUT_PUSHED: Serial.print("PUSHED"); break;
-    case BUT_UP: Serial.print("UP"); break;
-    case BUT_RELEASED: Serial.print("RELEASED"); break;
-    case BUT_DISABLED: Serial.print("DISABLED"); break;
-    default: Serial.print("UNKNOWN"); break;
+    case BUT_DOWN: debugPrint("DOWN"); break;
+    case BUT_PUSHED: debugPrint("PUSHED"); break;
+    case BUT_UP: debugPrint("UP"); break;
+    case BUT_RELEASED: debugPrint("RELEASED"); break;
+    case BUT_DISABLED: debugPrint("DISABLED"); break;
+    default: debugPrint("UNKNOWN"); break;
   }
-  Serial.print(" | Direct GPIO: ");
-  Serial.println(digitalRead(ROTARY_ENCODER_BUTTON_PIN) == LOW ? "PRESSED" : "NOT_PRESSED");
-  Serial.print("Uptime: "); Serial.println(getUptime());
-  Serial.print("PID Output: "); Serial.print(output); Serial.println(" %");
-  Serial.print("Rotary Encoder: "); Serial.println(rotaryEncoder.readEncoder());
+  debugPrint(" | Direct GPIO: ");
+  debugPrintln(digitalRead(ROTARY_ENCODER_BUTTON_PIN) == LOW ? "PRESSED" : "NOT_PRESSED");
+  debugPrint("Uptime: "); debugPrintln(getUptime());
+  debugPrint("PID Output: "); debugPrint(String(pidOutput)); debugPrintln(" %");
+  debugPrint("Rotary Encoder: "); debugPrintln(String(rotaryEncoder.readEncoder()));
   
   // DEBUG: Show raw GPIO states every time we print status
   bool pinA = digitalRead(ROTARY_ENCODER_A_PIN);
   bool pinB = digitalRead(ROTARY_ENCODER_B_PIN);  
   bool pinBtn = digitalRead(ROTARY_ENCODER_BUTTON_PIN);
-  Serial.print("GPIO A:"); Serial.print(pinA ? "H" : "L");
-  Serial.print(" B:"); Serial.print(pinB ? "H" : "L"); 
-  Serial.print(" Btn:"); Serial.println(pinBtn ? "H" : "L");
-  Serial.print("Encoder Button Raw: "); Serial.println(rotaryEncoder.isEncoderButtonDown() ? "Pressed" : "Not Pressed");
-  Serial.print("Relay: "); Serial.println(relayState ? "ON" : "OFF");
+  debugPrint("GPIO A:"); debugPrint(pinA ? "H" : "L");
+  debugPrint(" B:"); debugPrint(pinB ? "H" : "L"); 
+  debugPrint(" Btn:"); debugPrintln(pinBtn ? "H" : "L");
+  debugPrint("Encoder Button Raw: "); debugPrintln(rotaryEncoder.isEncoderButtonDown() ? "Pressed" : "Not Pressed");
+  debugPrint("Relay: "); debugPrintln(relayState ? "ON" : "OFF");
 
   delay(300);
 }
