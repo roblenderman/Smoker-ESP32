@@ -51,7 +51,7 @@ const float R_FIXED2 = 12400.0; // 12.4kΩ
 // Moving average filters for temperature readings (smoothing)
 movingAvg thermistor1Filter(10);     // 10-sample moving average for thermistor 1
 movingAvg thermistor2Filter(10);     // 10-sample moving average for thermistor 2
-movingAvg thermocoupleFilter(8);     // 8-sample moving average for thermocouple (slightly less to maintain responsiveness)
+movingAvg thermocoupleFilter(8);     // 8-sample moving average for thermocouple (balanced stability and responsiveness)
 
 // Rotary Encoder Pins (updated - avoid GPIO 12 for boot issues)
 const int ROTARY_ENCODER_A_PIN = 13;  // Back to 13 for wiring check
@@ -68,7 +68,7 @@ void IRAM_ATTR readEncoderISR() {
 
 // Smoker and meat setpoints
 float smokerTemp = 250.0; // °F, initial setpoint
-float meatDoneTemp = 165.0; // °F, initial meat done temp
+float meatDoneTemp = 170.0; // °F, initial meat done temp
 const float SMOKER_TEMP_MIN = 150.0; // °F
 const float SMOKER_TEMP_MAX = 350.0; // °F
 const float TEMP_STEP = 5.0; // °F increment
@@ -89,10 +89,10 @@ bool predictionValid = false;
 
 // PID parameters and variables
 double pidSetpoint, pidInput, pidOutput;
-double Kp = 7.0, Ki = 0.1, Kd = 20.0;
+double Kp = 7.0, Ki = 0.15, Kd = 15.0;
 ArduPID myPID;
 
-const float WINDOW_SIZE = 30000; // 30s window in ms (used for proportional calculation)
+const float WINDOW_SIZE = 15000; // 15s window in ms (used for proportional calculation)
 unsigned long windowStartTime = 0;
 bool relayState = false;
 float pidOutputPercent = 0.0; // Current PID output percentage (0-100)
