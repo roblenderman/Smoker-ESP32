@@ -1,2 +1,0 @@
-﻿Timestamp,Thermocouple,SmokerSetpoint,PidOutput,PidError,PTerms,ITerms,DTerms,RelayState,HeatingActive,Status
-2025-09-19 16:29:39,285.8,250,0,-35.8,0,0,0,N/A,NO,OVERHEAT

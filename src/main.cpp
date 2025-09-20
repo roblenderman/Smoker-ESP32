@@ -1,4 +1,21 @@
-#include <Arduino.h>
+/*
+ * ESP32 Smoker Temperature Controller
+ *
+ * This system provides precise temperature control for a smoker using:
+ * - MAX6675 thermocouple for smoker chamber temperature (primary control sensor)
+ * - Two thermistor sensors for meat temperature monitoring
+ * - PID controller for maintaining target smoker temperature
+ * - Time-proportional relay control for heater power modulation
+ * - Rotary encoder for setpoint adjustment and mode switching
+ * - LCD display and web interface for monitoring and control
+ * - Telnet interface for wireless debugging and monitoring
+ *
+ * Control Modes:
+ * - Smoker Mode: PID controls smoker temperature, encoder adjusts smoker setpoint
+ * - Meat Mode: PID still controls smoker, encoder adjusts meat target for monitoring
+ *
+ * Hardware: ESP32, MAX6675, thermistors, rotary encoder, LCD, relay module
+ */
 #include <WiFi.h>
 #include <Wire.h>
 #include <max6675.h>
@@ -31,6 +48,15 @@ const float THERMOCOUPLE_OFFSET_F = 0.0; // °F offset to subtract (reads 7°F h
 const float THERMISTOR1_OFFSET_F = 4.0; // °F offset for thermistor 1 (adjust as needed)
 const float THERMISTOR2_OFFSET_F = 4.0; // °F offset for thermistor 2 (adjust as needed)
 
+// ADC Configuration
+const int ADC_MAX_VALUE = 4095; // 12-bit ADC maximum value
+const int THERMISTOR_SAMPLES = 20; // Number of ADC samples to average
+const int THERMISTOR_SAMPLE_DELAY_MS = 5; // Delay between samples
+
+// Thermocouple Configuration
+const int THERMOCOUPLE_SAMPLES = 2; // Number of thermocouple samples to average
+const int THERMOCOUPLE_SAMPLE_DELAY_MS = 250; // Delay between thermocouple samples
+
 // I2C LCD (20x4)
 LiquidCrystal_I2C lcd(0x27, 20, 4); // I2C address 0x27, 20x4 LCD
 
@@ -38,20 +64,20 @@ LiquidCrystal_I2C lcd(0x27, 20, 4); // I2C address 0x27, 20x4 LCD
 const int relayPin = 16;
 
 // Voltage Divider (Thermistor 1)
-const int thermistorPin1 = 32; // ADC1
-const float R_FIXED1 = 12400.0; // 12.4kΩ
-const float V_IN = 3.25; // 3.3V
-const float R_25 = 107000.0; // 107kΩ at 25°C
-const float BETA = 3950.0; // Adjust if known
+const int THERMISTOR1_PIN = 32; // ADC1
+const float THERMISTOR_FIXED_RESISTOR_OHMS = 12400.0; // 12.4kΩ
+const float ADC_REFERENCE_VOLTAGE = 3.25; // 3.3V
+const float THERMISTOR_NOMINAL_RESISTANCE = 107000.0; // 107kΩ at 25°C
+const float THERMISTOR_BETA_COEFFICIENT = 3950.0; // Adjust if known
 
 // Voltage Divider (Thermistor 2)
-const int thermistorPin2 = 33; // ADC1
-const float R_FIXED2 = 12400.0; // 12.4kΩ
+const int THERMISTOR2_PIN = 33; // ADC1
+const float THERMISTOR2_FIXED_RESISTOR_OHMS = 12400.0; // 12.4kΩ
 
 // Moving average filters for temperature readings (smoothing)
-movingAvg thermistor1Filter(10);     // 10-sample moving average for thermistor 1
-movingAvg thermistor2Filter(10);     // 10-sample moving average for thermistor 2
-movingAvg thermocoupleFilter(6);     // 6-sample moving average for thermocouple (faster response, reduced overshoot)
+movingAvg thermistor1Filter(7);     // 10-sample moving average for thermistor 1
+movingAvg thermistor2Filter(7);     // 10-sample moving average for thermistor 2
+movingAvg thermocoupleFilter(4);     // 6-sample moving average for thermocouple (faster response, reduced overshoot)
 
 // Rotary Encoder Pins (updated - avoid GPIO 12 for boot issues)
 const int ROTARY_ENCODER_A_PIN = 13;  // Back to 13 for wiring check
@@ -89,17 +115,22 @@ bool predictionValid = false;
 
 // PID parameters and variables
 double pidSetpoint, pidInput, pidOutput;
-double Kp = 8, Ki = 0.15, Kd = 22.0; // Optimized for overshoot reduction: Kp↓ (7.0→5.5), Kd↑ (15.0→22.0)
+double Kp = 11, Ki = 0.15, Kd = 35; // Tighter control: Ki↓ (0.15→0.12), Kd↑ (25→35) for reduced oscillation
 ArduPID myPID; // Will be initialized in setup() with .begin() method
 
-const float WINDOW_SIZE = 15000; // 15s window in ms (used for proportional calculation)
+// PID Control Configuration
+const unsigned long PID_TELEPLOT_INTERVAL_MS = 5000; // Send PID data every 5 seconds
+const float PID_OUTPUT_MIN = 25.0;   // Minimum PID output percentage
+const float PID_OUTPUT_MAX = 100.0; // Maximum PID output percentage
+
+const float WINDOW_SIZE = 10000; // 5s window in ms (reduced for finer control)
 unsigned long windowStartTime = 0;
 bool relayState = false;
 float pidOutputPercent = 0.0; // Current PID output percentage (0-100)
 
 // Button hold-to-adjust (legacy - no longer used)
 const unsigned long REPEAT_DELAY = 200; // ms between adjustments
-const unsigned long MODE_TIMEOUT = 5000; // 5s inactivity to exit meat temp mode
+//const unsigned long MODE_TIMEOUT = 5000; // 5s inactivity to exit meat temp mode
 const unsigned long MODE_ENTER_HOLD = 1000; // 1s hold to enter meat temp mode
 unsigned long lastButtonActivity = 0;
 bool meatTempMode = false;
@@ -111,9 +142,21 @@ AsyncWebServer server(80);
 void debugPrint(String message);
 void debugPrintln(String message);
 
+// Temperature reading functions
+float readThermocoupleTemperature();
+float readThermistorTemperature(int pin, float fixedResistorOhms, float offsetF);
+void updateTemperatureFilters(float thermocoupleTemp, float thermistor1Temp, float thermistor2Temp);
+
+// PID Control Functions
+void initializePID();
+float updatePID(float currentTemp, float setpoint);
+void controlHeater(float pidOutput);
+void resetPID();
+void sendPIDTelemetry();
+
 float calculateTemp(float r) {
   float t25 = 298.15; // 25°C in Kelvin
-  float tempK = 1.0 / ( (1.0 / t25) + (log(r / R_25) / BETA) );
+  float tempK = 1.0 / ( (1.0 / t25) + (log(r / THERMISTOR_NOMINAL_RESISTANCE) / THERMISTOR_BETA_COEFFICIENT) );
   float tempC = tempK - 273.15; // °C
   return tempC * 9.0 / 5.0 + 32.0; // °F
 }
@@ -150,37 +193,6 @@ String getUptimeLCD() {
 }
 
 // Add after includes and before setup()
-void testEncoderGPIO() {
-  static unsigned long lastTest = 0;
-  if (millis() - lastTest > 500) {  // Test every 500ms
-    lastTest = millis();
-    
-    bool pinA = digitalRead(ROTARY_ENCODER_A_PIN);
-    bool pinB = digitalRead(ROTARY_ENCODER_B_PIN);
-    bool pinBtn = digitalRead(ROTARY_ENCODER_BUTTON_PIN);
-    long encoderValue = rotaryEncoder.readEncoder();
-    
-    // Only print if something changed
-    static bool lastA = true, lastB = true, lastBtn = true;
-    static long lastEnc = 0;
-    
-    if (pinA != lastA || pinB != lastB || pinBtn != lastBtn || encoderValue != lastEnc) {
-      debugPrint("GPIO Change - A:");
-      debugPrint(pinA ? "H" : "L");
-      debugPrint(" B:");
-      debugPrint(pinB ? "H" : "L");
-      debugPrint(" Btn:");
-      debugPrint(pinBtn ? "H" : "L");
-      debugPrint(" Enc:");
-      debugPrintln(String(encoderValue));
-      
-      lastA = pinA;
-      lastB = pinB;
-      lastBtn = pinBtn;
-      lastEnc = encoderValue;
-    }
-  }
-}
 
 // Helper function for dual output to Serial and Telnet
 void debugPrint(String message) {
@@ -199,7 +211,216 @@ void debugPrintln(String message) {
   }
 }
 
+// Temperature Reading Functions
+// ============================
 
+/**
+ * Reads thermocouple temperature with averaging and filtering
+ * @return Temperature in Fahrenheit (°F)
+ */
+float readThermocoupleTemperature() {
+  float thermocoupleReading = 0;
+  int validReadings = 0;
+
+  // Take multiple samples for thermocouple stability
+  for (int i = 0; i < THERMOCOUPLE_SAMPLES; i++) {
+    float reading = thermocouple.readCelsius();
+    if (!isnan(reading)) {
+      thermocoupleReading += reading;
+      validReadings++;
+      //debugPrintln("TC: " + String(reading) + "°C");
+    }
+    delay(THERMOCOUPLE_SAMPLE_DELAY_MS);
+  }
+
+  float tempThermocoupleC;
+  if (validReadings > 0) {
+    tempThermocoupleC = thermocoupleFilter.reading(thermocoupleReading / validReadings);
+  } else {
+    tempThermocoupleC = thermocoupleFilter.reading(thermocouple.readCelsius());
+  }
+
+  // Convert to Fahrenheit and apply offset
+  return (tempThermocoupleC * 9.0 / 5.0 + 32.0) - THERMOCOUPLE_OFFSET_F;
+}
+
+/**
+ * Reads thermistor temperature with averaging and filtering
+ * @param pin ADC pin number
+ * @param fixedResistorOhms Fixed resistor value in ohms
+ * @param offsetF Temperature offset in Fahrenheit
+ * @return Temperature in Fahrenheit (°F)
+ */
+float readThermistorTemperature(int pin, float fixedResistorOhms, float offsetF) {
+  // Take multiple ADC samples for stability
+  int rawSum = 0;
+  for (int i = 0; i < THERMISTOR_SAMPLES; i++) {
+    rawSum += analogRead(pin);
+    //debugPrintln("PIN: " + String(pin) + " ADC: " + String(analogRead(pin)));
+    delay(THERMISTOR_SAMPLE_DELAY_MS);
+  }
+  int rawAverage = rawSum / THERMISTOR_SAMPLES;
+
+  // Apply moving average filter
+  int filteredRaw = (pin == THERMISTOR1_PIN) ?
+    thermistor1Filter.reading(rawAverage) :
+    thermistor2Filter.reading(rawAverage);
+
+  // Convert ADC reading to voltage
+  float voltage = (filteredRaw / (float)ADC_MAX_VALUE) * ADC_REFERENCE_VOLTAGE;
+
+  // Calculate thermistor resistance using voltage divider formula
+  float thermistorResistance = (voltage * fixedResistorOhms) / (ADC_REFERENCE_VOLTAGE - voltage);
+
+  // Prevent invalid resistance values
+  if (thermistorResistance <= 0) thermistorResistance = 1.0;
+
+  // Calculate temperature and apply offset
+  return calculateTemp(thermistorResistance) - offsetF;
+}
+
+/**
+ * Reads all temperatures and updates global variables
+ * @param thermocoupleF Reference to store thermocouple temperature
+ * @param thermistor1F Reference to store thermistor 1 temperature
+ * @param thermistor2F Reference to store thermistor 2 temperature
+ */
+void readAllTemperatures(float& thermocoupleF, float& thermistor1F, float& thermistor2F) {
+  thermocoupleF = readThermocoupleTemperature();
+  thermistor1F = readThermistorTemperature(THERMISTOR1_PIN, THERMISTOR_FIXED_RESISTOR_OHMS, THERMISTOR1_OFFSET_F);
+  thermistor2F = readThermistorTemperature(THERMISTOR2_PIN, THERMISTOR2_FIXED_RESISTOR_OHMS, THERMISTOR2_OFFSET_F);
+}
+
+// PID Control Functions
+// =====================
+
+/**
+ * Initializes the PID controller with proper settings
+ */
+void initializePID() {
+  myPID.begin(&pidInput, &pidOutput, &pidSetpoint, Kp, Ki, Kd);
+  myPID.setOutputLimits(PID_OUTPUT_MIN, PID_OUTPUT_MAX); // PID output 0-100%
+  myPID.setWindUpLimits(0, 60); // Prevent integral windup, limit to ±60% of output range
+  myPID.setSampleTime(1000); // 1 second sample time
+  myPID.start(); // Start the PID controller
+}
+
+/**
+ * Updates PID controller with current temperature and setpoint
+ * @param currentTemp Current thermocouple temperature in °F
+ * @param setpoint Target temperature in °F
+ * @return PID output percentage (0-100%)
+ */
+float updatePID(float currentTemp, float setpoint) {
+  pidInput = currentTemp;
+  pidSetpoint = setpoint;
+
+  myPID.compute(); // Calculate PID output based on error (setpoint - input)
+
+  debugPrint("PID Compute Result: ");
+  debugPrintln(String(pidOutput));
+
+  // Store PID output percentage for web display
+  pidOutputPercent = pidOutput;
+
+  return pidOutput;
+}
+
+/**
+ * Controls the heater relay using time-proportional control
+ * @param pidOutput PID output percentage (0-100%)
+ */
+void controlHeater(float pidOutput) {
+  unsigned long currentTime = millis();
+
+  // Time-Proportional Relay Control
+  // Converts PID output percentage to on/off timing within a fixed time window
+  float effectivePidOutput = pidOutput;
+
+  // Update display percentage to reflect PID output
+  pidOutputPercent = effectivePidOutput;
+
+  float onTime = (effectivePidOutput / 100.0) * WINDOW_SIZE; // Calculate ON time in milliseconds
+  unsigned long windowElapsed = currentTime - windowStartTime;
+  bool shouldBeOn = (windowElapsed <= onTime);
+
+  static bool lastControlState = false;
+
+  if (shouldBeOn != lastControlState) {
+    if (shouldBeOn) {
+      digitalWrite(relayPin, HIGH); // Relay ON (HIGH for high-trigger relay)
+      relayState = true;
+      debugPrintln("HEATER: Turning ON (relay pin HIGH)");
+    } else {
+      digitalWrite(relayPin, LOW); // Relay OFF (LOW for high-trigger relay)
+      relayState = false;
+      debugPrintln("HEATER: Turning OFF (relay pin LOW)");
+    }
+    lastControlState = shouldBeOn;
+  }
+
+  // Update Teleplot with relay state and pin voltage verification
+  static unsigned long lastRelayTeleplotTime = 0;
+  if (currentTime - lastRelayTeleplotTime > 1000) { // Send every 1 second for relay
+    debugPrint(">relay_state:");
+    debugPrintln(String(relayState ? 100.0 : 0.0));
+    debugPrint(">relay_on_time_ms:");
+    debugPrintln(String(onTime));
+    debugPrint(">pid_output_percent:");
+    debugPrintln(String(effectivePidOutput));
+
+    debugPrint("Relay Control - Raw PID: ");
+    debugPrint(String(pidOutput, 1));
+    debugPrint("%, Effective: ");
+    debugPrint(String(effectivePidOutput, 1));
+    debugPrintln("%");
+
+    lastRelayTeleplotTime = currentTime;
+  }
+
+  // Reset window timer when window period completes
+  if (windowElapsed >= WINDOW_SIZE) {
+    windowStartTime = currentTime;
+  }
+}
+
+/**
+ * Resets the PID controller integral term (useful when setpoint changes)
+ */
+void resetPID() {
+  myPID.reset(); // Reset PID integral
+}
+
+/**
+ * Sends PID telemetry data for debugging and monitoring
+ */
+void sendPIDTelemetry() {
+  unsigned long currentTime = millis();
+
+  // Update Teleplot with PID control data
+  static unsigned long lastPidTeleplotTime = 0;
+  if (currentTime - lastPidTeleplotTime > PID_TELEPLOT_INTERVAL_MS) { // Send every 5 seconds
+    double error = pidSetpoint - pidInput;
+    debugPrint(">pid_output:");
+    debugPrintln(String(pidOutput));
+   // debugPrint(">pid_error:");
+   // debugPrintln(String(error));
+   // debugPrint(">pid_setpoint:");
+   // debugPrintln(String(pidSetpoint));
+   // debugPrint(">pid_input:");
+   // debugPrintln(String(pidInput));
+
+    // Get internal PID term values from ArduPID
+    //debugPrint(">pid_p_term:");
+    //debugPrintln(String(myPID.P()));
+    //debugPrint(">pid_i_term:");
+    //debugPrintln(String(myPID.I()));
+    //debugPrint(">pid_d_term:");
+    //debugPrintln(String(myPID.D()));
+
+    lastPidTeleplotTime = currentTime;
+  }
+}
 
 void setup() {
   Serial.begin(115200);
@@ -356,11 +577,7 @@ void setup() {
   pidSetpoint = smokerTemp;
   pidInput = 0; // Initialize input
   pidOutput = 0; // Initialize output
-  myPID.begin(&pidInput, &pidOutput, &pidSetpoint, Kp, Ki, Kd); // FORWARD = DIRECT logic
-  myPID.setOutputLimits(0, 100); // PID output 0-100%
-  myPID.setWindUpLimits(-50, 50); // Prevent integral windup, limit to ±50% of output range
-  myPID.setSampleTime(1000); // 1 second sample time
-  myPID.start(); // Start the PID controller
+  initializePID();
   windowStartTime = millis();
 
   // Setup web server
@@ -405,46 +622,8 @@ void setup() {
     html += "</body></html>";
 
     // Replace placeholders with filtered readings
-    float thermocoupleReading = 0;
-    int validReadings = 0;
-    
-    // Take multiple samples for thermocouple stability
-    for (int i = 0; i < 3; i++) {
-      float reading = thermocouple.readCelsius();
-      if (!isnan(reading)) {
-        thermocoupleReading += reading;
-        validReadings++;
-      }
-      delay(250);
-    }
-    
-    float tempThermocoupleF;
-    if (validReadings > 0) {
-      tempThermocoupleF = (thermocoupleFilter.reading(thermocoupleReading / validReadings) * 9.0 / 5.0 + 32.0) - THERMOCOUPLE_OFFSET_F;
-    } else {
-      tempThermocoupleF = (thermocoupleFilter.reading(thermocouple.readCelsius()) * 9.0 / 5.0 + 32.0) - THERMOCOUPLE_OFFSET_F;
-    }
-    int raw1 = 0;
-    for (int i = 0; i < 20; i++) {  // Increased from 10 to 20 samples
-      raw1 += analogRead(thermistorPin1);
-      delay(5);  // Reduced delay since we have more samples
-    }
-    raw1 /= 20;
-    float vOut1 = (raw1 / 4095.0) * V_IN;
-    float rThermistor1 = (vOut1 * R_FIXED1) / (V_IN - vOut1);
-    if (rThermistor1 <= 0) rThermistor1 = 1.0; // Prevent invalid resistance
-    float tempThermistor1F = calculateTemp(rThermistor1) - THERMISTOR1_OFFSET_F;
-
-    int raw2 = 0;
-    for (int i = 0; i < 20; i++) {  // Increased from 10 to 20 samples
-      raw2 += analogRead(thermistorPin2);
-      delay(5);  // Reduced delay since we have more samples
-    }
-    raw2 /= 20;
-    float vOut2 = (raw2 / 4095.0) * V_IN;
-    float rThermistor2 = (vOut2 * R_FIXED2) / (V_IN - vOut2);
-    if (rThermistor2 <= 0) rThermistor2 = 1.0; // Prevent invalid resistance
-    float tempThermistor2F = calculateTemp(rThermistor2) - THERMISTOR2_OFFSET_F;
+    float tempThermocoupleF, tempThermistor1F, tempThermistor2F;
+    readAllTemperatures(tempThermocoupleF, tempThermistor1F, tempThermistor2F);
 
     html.replace("%TC_TEMP%", String((int)round(tempThermocoupleF)));
     html.replace("%T1_TEMP%", String((int)round(tempThermistor1F)));
@@ -474,7 +653,7 @@ void setup() {
       smokerTemp = SMOKER_TEMP_MAX;
     }
     pidSetpoint = smokerTemp; // Update PID setpoint immediately
-    myPID.reset(); // Reset PID integral
+    resetPID(); // Reset PID integral
     request->redirect("/");
   });
 
@@ -484,7 +663,7 @@ void setup() {
       smokerTemp = SMOKER_TEMP_MIN;
     }
     pidSetpoint = smokerTemp; // Update PID setpoint immediately
-    myPID.reset(); // Reset PID integral
+    resetPID(); // Reset PID integral
     request->redirect("/");
   });
 
@@ -529,9 +708,6 @@ void loop() {
   }
   
   unsigned long currentTime = millis();
-  
-  // Test encoder GPIO pins (remove this line once encoder is working)
-  // testEncoderGPIO(); // DISABLED - was causing system freeze due to excessive debug output
   
   // Periodic telnet test message
   static unsigned long lastTelnetTest = 0;
@@ -667,87 +843,20 @@ void loop() {
     return;
   }
 
-  // Read thermocouple (multiple samples + moving average for improved accuracy)
-  float tempSum = 0;
-  int validReadings = 0;
-  
-  // Take multiple samples to reduce noise
-  for (int i = 0; i < 2; i++) {
-    float reading = thermocouple.readCelsius();
-    if (!isnan(reading)) {  // Only use valid readings
-      tempSum += reading;
-      validReadings++;
-    }
-    delay(250);  // Short delay between samples
-  }
-  
-  float tempThermocouple;
-  if (validReadings > 0) {
-    tempThermocouple = thermocoupleFilter.reading(tempSum / validReadings);
-  } else {
-    tempThermocouple = thermocoupleFilter.reading(thermocouple.readCelsius());
-  }
-  
-  float tempThermocoupleF = (tempThermocouple * 9.0 / 5.0 + 32.0) - THERMOCOUPLE_OFFSET_F;
+  // Read all temperatures using dedicated functions
+  float tempThermocoupleF, tempThermistor1F, tempThermistor2F;
+  readAllTemperatures(tempThermocoupleF, tempThermistor1F, tempThermistor2F);
 
-  // Read thermistor 1 (20 samples + moving average for improved accuracy)
-  int raw1 = 0;
-  for (int i = 0; i < 20; i++) {  // Increased from 10 to 20 samples
-    raw1 += analogRead(thermistorPin1);
-    delay(5);  // Reduced delay since we have more samples
-  }
-  raw1 /= 20;
-  
-  // Apply moving average filter to raw ADC reading
-  int filteredRaw1 = thermistor1Filter.reading(raw1);
-  
-  float vOut1 = (filteredRaw1 / 4095.0) * V_IN;
-  float rThermistor1 = (vOut1 * R_FIXED1) / (V_IN - vOut1);
-  if (rThermistor1 <= 0) rThermistor1 = 1.0; // Prevent invalid resistance
-  float tempThermistor1F = calculateTemp(rThermistor1) - THERMISTOR1_OFFSET_F;
-
-  // Debug output for thermistor diagnostics  
+  // Debug output for thermistor diagnostics (preserved from original)
   static unsigned long lastDebugTime = 0;
-  if (currentTime - lastDebugTime > 30000) { // Every 30 seconds (reduced from 15 to prevent spam)
-    debugPrint("T1 Raw: ");
-    debugPrint(String(raw1));
-    debugPrint(" (");
-    debugPrint(String(vOut1, 3));
-    debugPrint("V) R: ");
-    debugPrint(String(rThermistor1, 0));
-    debugPrint("Ω Temp: ");
+  if (currentTime - lastDebugTime > 30000) { // Every 30 seconds
+    // Note: Debug output simplified since we don't have raw ADC values anymore
+    debugPrint("T1 Temp: ");
     debugPrint(String(tempThermistor1F, 1));
-    debugPrint("°F | ");
-    lastDebugTime = currentTime;
-  }
-
-  // Read thermistor 2 (20 samples + moving average for improved accuracy)
-  int raw2 = 0;
-  for (int i = 0; i < 20; i++) {  // Increased from 10 to 20 samples
-    raw2 += analogRead(thermistorPin2);
-    delay(5);  // Reduced delay since we have more samples
-  }
-  raw2 /= 20;
-  
-  // Apply moving average filter to raw ADC reading
-  int filteredRaw2 = thermistor2Filter.reading(raw2);
-  
-  float vOut2 = (filteredRaw2 / 4095.0) * V_IN;
-  float rThermistor2 = (vOut2 * R_FIXED2) / (V_IN - vOut2);
-  if (rThermistor2 <= 0) rThermistor2 = 1.0; // Prevent invalid resistance
-  float tempThermistor2F = calculateTemp(rThermistor2) - THERMISTOR2_OFFSET_F;
-
-  // Complete debug output for thermistor 2
-  if (currentTime - lastDebugTime > 15000) { // Same 5-second window as T1
-    debugPrint("T2 Raw: ");
-    debugPrint(String(raw2));
-    debugPrint(" (");
-    debugPrint(String(vOut2, 3));
-    debugPrint("V) R: ");
-    debugPrint(String(rThermistor2, 0));
-    debugPrint("Ω Temp: ");
+    debugPrint("°F | T2 Temp: ");
     debugPrint(String(tempThermistor2F, 1));
     debugPrintln("°F");
+    lastDebugTime = currentTime;
   }
 
   // Send data to Teleplot for real-time visualization
@@ -766,10 +875,10 @@ void loop() {
     debugPrintln(String(meatDoneTemp));
     
     // Encoder and button state monitoring
-    debugPrint(">button_state:");
-    debugPrintln(String(digitalRead(ROTARY_ENCODER_BUTTON_PIN) == LOW ? 1.0 : 0.0));
-    debugPrint(">current_mode:");
-    debugPrintln(String(meatTempMode ? 1.0 : 0.0));  // 1 = meat mode, 0 = smoker mode
+    //debugPrint(">button_state:");
+    //debugPrintln(String(digitalRead(ROTARY_ENCODER_BUTTON_PIN) == LOW ? 1.0 : 0.0));
+    //debugPrint(">current_mode:");
+    //debugPrintln(String(meatTempMode ? 1.0 : 0.0));  // 1 = meat mode, 0 = smoker mode
     
     lastTeleplotTime = currentTime;
   }
@@ -835,7 +944,7 @@ void loop() {
     }
     smokerTemp = meatDoneTemp;
     pidSetpoint = smokerTemp; // Update PID setpoint immediately
-    myPID.reset(); // Reset PID integral to stabilize at meatDoneTemp
+    resetPID(); // Reset PID integral to stabilize at meatDoneTemp
   }
 
   // Encoder Button Handling (mode switch) - using direct GPIO reading for reliability
@@ -886,97 +995,23 @@ void loop() {
   lastButtonState = currentButtonState;
 
 
-  // No automatic exit from meatTempMode; mode is switched only by encoder button
+  // Mode Switching Logic
+  // Two modes: Smoker Temp Control vs Meat Temp Monitoring
+  // - Smoker mode: PID controls smoker temperature, encoder adjusts smoker setpoint
+  // - Meat mode: PID still controls smoker temp, but encoder adjusts meat target for monitoring
+  // Switch modes by pressing encoder button
 
-  // PID control using Arduino PID library
-  pidInput = tempThermocoupleF;
-  pidSetpoint = smokerTemp;
-  
-  myPID.compute();
-  
-  debugPrint("PID Compute Result: ");
-  debugPrintln(String(pidOutput));
-  
-  // Store PID output percentage for web display (will be updated if min heating is applied)
-  pidOutputPercent = pidOutput;
+  // PID Temperature Control
+  // Input: Current thermocouple temperature (°F)
+  // Setpoint: Target smoker temperature (°F)
+  // Output: Heater power percentage (0-100%)
+  float pidOutput = updatePID(tempThermocoupleF, smokerTemp);
 
-  // Update Teleplot with PID control data
-  static unsigned long lastPidTeleplotTime = 0;
-  if (currentTime - lastPidTeleplotTime > 5000) { // Send every 1 second
-    double error = pidSetpoint - pidInput;
-    debugPrint(">pid_output:");
-    debugPrintln(String(pidOutput));
-    debugPrint(">pid_error:");
-    debugPrintln(String(error));
-    debugPrint(">pid_setpoint:");
-    debugPrintln(String(pidSetpoint));
-    debugPrint(">pid_input:");
-    debugPrintln(String(pidInput));
-    
-    // Get internal PID term values from ArduPID
-    debugPrint(">pid_p_term:");
-    debugPrintln(String(myPID.P()));
-    debugPrint(">pid_i_term:");
-    debugPrintln(String(myPID.I()));
-    debugPrint(">pid_d_term:");
-    debugPrintln(String(myPID.D()));
-    
-    lastPidTeleplotTime = currentTime;
-  }
+  // Control heater using time-proportional relay control
+  controlHeater(pidOutput);
 
-  // Time-proportional relay control using direct PID output
-  float effectivePidOutput = pidOutput;
-  
-  // Update display percentage to reflect PID output
-  pidOutputPercent = effectivePidOutput;
-  
-  float onTime = (effectivePidOutput / 100.0) * WINDOW_SIZE; // ms
-  unsigned long windowElapsed = currentTime - windowStartTime;
-  bool shouldBeOn = (windowElapsed <= onTime);
-  
-  // Only change control state if needed (reduces unnecessary switching)
-  static bool lastControlState = false;
-  
-  if (shouldBeOn != lastControlState) {
-    if (shouldBeOn) {
-      digitalWrite(relayPin, HIGH); // Relay ON (HIGH for high-trigger relay)
-      relayState = true;
-      debugPrintln("HEATER: Turning ON (relay pin HIGH)");
-    } else {
-      digitalWrite(relayPin, LOW); // Relay OFF (LOW for high-trigger relay)
-      relayState = false;
-      debugPrintln("HEATER: Turning OFF (relay pin LOW)");
-    }
-    lastControlState = shouldBeOn;
-  }
-  
-  // Update Teleplot with relay state and pin voltage verification
-  static unsigned long lastRelayTeleplotTime = 0;
-  if (currentTime - lastRelayTeleplotTime > 1000) { // Send every 1 second for relay
-    debugPrint(">relay_state:");
-    debugPrintln(String(relayState ? 100.0 : 0.0));
-    debugPrint(">relay_on_time_ms:");
-    debugPrintln(String(onTime));
-    debugPrint(">pid_output_percent:");
-    debugPrintln(String(effectivePidOutput));
-    
-    debugPrint("Relay Control - Raw PID: ");
-    debugPrint(String(pidOutput, 1));
-    debugPrint("%, Effective: ");
-    debugPrint(String(effectivePidOutput, 1));
-    debugPrint("%, State: ");
-    debugPrintln(relayState ? "ON" : "OFF");
-    
-    lastRelayTeleplotTime = currentTime;
-  }
-
-  // Reset window smoothly - only if we're past the window and relay should be off
-  if (windowElapsed >= WINDOW_SIZE) {
-    // Only reset if relay is currently off or should be off
-    if (!shouldBeOn || windowElapsed >= WINDOW_SIZE + 1000) { // Add 1 second grace period
-      windowStartTime = currentTime;
-    }
-  }
+  // Send PID telemetry data for debugging and monitoring
+  sendPIDTelemetry();
 
   // Display on 20x4 LCD with optimized updates
   static int lastTempTC = -999;
