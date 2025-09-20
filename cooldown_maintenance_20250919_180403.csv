@@ -1,0 +1,3 @@
+﻿Timestamp,Temp,Setpoint,PidOutput,Error,RelayState,TempTrend,Phase
+2025-09-19 18:04:03,294.8,270,84184,Cannot overwrite variable Error because it is read-only or constant. Cannot overwrite variable PID because it is read-only or constant. This command cannot find a matching alias because an alias with the name 'pio' does not exist.,0,INITIAL,COOLDOWN
+2025-09-19 18:04:30,293,270,84184,Cannot overwrite variable Error because it is read-only or constant. Cannot overwrite variable PID because it is read-only or constant. Cannot overwrite variable Error because it is read-only or constant. Cannot overwrite variable PID because it is read-only or constant. This command cannot find a matching alias because an alias with the name 'pio' does not exist.,N/A,FALLING,COOLDOWN

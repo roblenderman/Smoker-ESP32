@@ -40,9 +40,9 @@ const int relayPin = 16;
 // Voltage Divider (Thermistor 1)
 const int thermistorPin1 = 32; // ADC1
 const float R_FIXED1 = 12400.0; // 12.4kΩ
-const float V_IN = 3.3; // 3.3V
-const float R_25 = 110000.0; // 110kΩ at 25°C
-const float BETA = 4350.0; // Adjust if known
+const float V_IN = 3.25; // 3.3V
+const float R_25 = 107000.0; // 107kΩ at 25°C
+const float BETA = 3950.0; // Adjust if known
 
 // Voltage Divider (Thermistor 2)
 const int thermistorPin2 = 33; // ADC1
@@ -51,7 +51,7 @@ const float R_FIXED2 = 12400.0; // 12.4kΩ
 // Moving average filters for temperature readings (smoothing)
 movingAvg thermistor1Filter(10);     // 10-sample moving average for thermistor 1
 movingAvg thermistor2Filter(10);     // 10-sample moving average for thermistor 2
-movingAvg thermocoupleFilter(8);     // 8-sample moving average for thermocouple (balanced stability and responsiveness)
+movingAvg thermocoupleFilter(6);     // 6-sample moving average for thermocouple (faster response, reduced overshoot)
 
 // Rotary Encoder Pins (updated - avoid GPIO 12 for boot issues)
 const int ROTARY_ENCODER_A_PIN = 13;  // Back to 13 for wiring check
@@ -89,8 +89,8 @@ bool predictionValid = false;
 
 // PID parameters and variables
 double pidSetpoint, pidInput, pidOutput;
-double Kp = 7.0, Ki = 0.15, Kd = 15.0;
-ArduPID myPID;
+double Kp = 8, Ki = 0.15, Kd = 22.0; // Optimized for overshoot reduction: Kp↓ (7.0→5.5), Kd↑ (15.0→22.0)
+ArduPID myPID; // Will be initialized in setup() with .begin() method
 
 const float WINDOW_SIZE = 15000; // 15s window in ms (used for proportional calculation)
 unsigned long windowStartTime = 0;
@@ -354,10 +354,13 @@ void setup() {
 
   // Initialize PID controller
   pidSetpoint = smokerTemp;
-  myPID.begin(&pidInput, &pidOutput, &pidSetpoint, Kp, Ki, Kd);
+  pidInput = 0; // Initialize input
+  pidOutput = 0; // Initialize output
+  myPID.begin(&pidInput, &pidOutput, &pidSetpoint, Kp, Ki, Kd); // FORWARD = DIRECT logic
   myPID.setOutputLimits(0, 100); // PID output 0-100%
   myPID.setWindUpLimits(-50, 50); // Prevent integral windup, limit to ±50% of output range
   myPID.setSampleTime(1000); // 1 second sample time
+  myPID.start(); // Start the PID controller
   windowStartTime = millis();
 
   // Setup web server
@@ -412,7 +415,7 @@ void setup() {
         thermocoupleReading += reading;
         validReadings++;
       }
-      delay(30);
+      delay(250);
     }
     
     float tempThermocoupleF;
@@ -470,6 +473,7 @@ void setup() {
     if (smokerTemp > SMOKER_TEMP_MAX) {
       smokerTemp = SMOKER_TEMP_MAX;
     }
+    pidSetpoint = smokerTemp; // Update PID setpoint immediately
     myPID.reset(); // Reset PID integral
     request->redirect("/");
   });
@@ -479,6 +483,7 @@ void setup() {
     if (smokerTemp < SMOKER_TEMP_MIN) {
       smokerTemp = SMOKER_TEMP_MIN;
     }
+    pidSetpoint = smokerTemp; // Update PID setpoint immediately
     myPID.reset(); // Reset PID integral
     request->redirect("/");
   });
@@ -526,22 +531,22 @@ void loop() {
   unsigned long currentTime = millis();
   
   // Test encoder GPIO pins (remove this line once encoder is working)
-  testEncoderGPIO();
+  // testEncoderGPIO(); // DISABLED - was causing system freeze due to excessive debug output
   
   // Periodic telnet test message
   static unsigned long lastTelnetTest = 0;
-  if (currentTime - lastTelnetTest > 5000) { // Every 5 seconds
+  if (currentTime - lastTelnetTest > 60000) { // Every 60 seconds
     debugPrintln("Telnet test - " + String(millis()) + "ms uptime");
     debugPrintln("WiFi Signal: " + String(WiFi.RSSI()) + " dBm");
     debugPrintln("Free Heap: " + String(ESP.getFreeHeap()) + " bytes");
     lastTelnetTest = currentTime;
   }
-  static unsigned long debugCounter = 0;
-  debugCounter++;
-  if (debugCounter % 1000 == 0) {  // Print every 1000 loops
-    debugPrint("DEBUG: Encoder check loop #");
-    debugPrintln(String(debugCounter));
-  }
+  // static unsigned long debugCounter = 0;
+  // debugCounter++; // DISABLED - was causing excessive debug output
+ // if (debugCounter % 1000 == 0) {  // Print every 1000 loops
+ //   debugPrint("DEBUG: Encoder check loop #");
+ //   debugPrintln(String(debugCounter));
+ // }
   
   // Rotary encoder handling - check for changes
   static long lastEncoderValue = 0;
@@ -566,7 +571,7 @@ void loop() {
     } else {
       // For meat temp mode, encoder value directly sets meat temperature
       meatDoneTemp = currentEncoderValue;
-      meatDoneTemp = constrain(meatDoneTemp, 100.0, 200.0);
+      meatDoneTemp = constrain(meatDoneTemp, 100.0, 250.0);
       debugPrint("New meat target temperature: ");
       debugPrintln(String(meatDoneTemp));
     }
@@ -667,13 +672,13 @@ void loop() {
   int validReadings = 0;
   
   // Take multiple samples to reduce noise
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 2; i++) {
     float reading = thermocouple.readCelsius();
     if (!isnan(reading)) {  // Only use valid readings
       tempSum += reading;
       validReadings++;
     }
-    delay(50);  // Short delay between samples
+    delay(250);  // Short delay between samples
   }
   
   float tempThermocouple;
@@ -701,9 +706,9 @@ void loop() {
   if (rThermistor1 <= 0) rThermistor1 = 1.0; // Prevent invalid resistance
   float tempThermistor1F = calculateTemp(rThermistor1) - THERMISTOR1_OFFSET_F;
 
-  // Debug output for thermistor diagnostics
+  // Debug output for thermistor diagnostics  
   static unsigned long lastDebugTime = 0;
-  if (currentTime - lastDebugTime > 5000) { // Every 5 seconds
+  if (currentTime - lastDebugTime > 30000) { // Every 30 seconds (reduced from 15 to prevent spam)
     debugPrint("T1 Raw: ");
     debugPrint(String(raw1));
     debugPrint(" (");
@@ -733,7 +738,7 @@ void loop() {
   float tempThermistor2F = calculateTemp(rThermistor2) - THERMISTOR2_OFFSET_F;
 
   // Complete debug output for thermistor 2
-  if (currentTime - lastDebugTime <= 100) { // Same 5-second window as T1
+  if (currentTime - lastDebugTime > 15000) { // Same 5-second window as T1
     debugPrint("T2 Raw: ");
     debugPrint(String(raw2));
     debugPrint(" (");
@@ -829,6 +834,7 @@ void loop() {
       meatTempReached = true;
     }
     smokerTemp = meatDoneTemp;
+    pidSetpoint = smokerTemp; // Update PID setpoint immediately
     myPID.reset(); // Reset PID integral to stabilize at meatDoneTemp
   }
 
@@ -888,12 +894,15 @@ void loop() {
   
   myPID.compute();
   
-  // Store PID output percentage for web display
+  debugPrint("PID Compute Result: ");
+  debugPrintln(String(pidOutput));
+  
+  // Store PID output percentage for web display (will be updated if min heating is applied)
   pidOutputPercent = pidOutput;
 
   // Update Teleplot with PID control data
   static unsigned long lastPidTeleplotTime = 0;
-  if (currentTime - lastPidTeleplotTime > 1000) { // Send every 1 second
+  if (currentTime - lastPidTeleplotTime > 5000) { // Send every 1 second
     double error = pidSetpoint - pidInput;
     debugPrint(">pid_output:");
     debugPrintln(String(pidOutput));
@@ -903,11 +912,25 @@ void loop() {
     debugPrintln(String(pidSetpoint));
     debugPrint(">pid_input:");
     debugPrintln(String(pidInput));
+    
+    // Get internal PID term values from ArduPID
+    debugPrint(">pid_p_term:");
+    debugPrintln(String(myPID.P()));
+    debugPrint(">pid_i_term:");
+    debugPrintln(String(myPID.I()));
+    debugPrint(">pid_d_term:");
+    debugPrintln(String(myPID.D()));
+    
     lastPidTeleplotTime = currentTime;
   }
 
-  // Time-proportional relay control with enhanced debugging
-  float onTime = (pidOutput / 100.0) * WINDOW_SIZE; // ms
+  // Time-proportional relay control using direct PID output
+  float effectivePidOutput = pidOutput;
+  
+  // Update display percentage to reflect PID output
+  pidOutputPercent = effectivePidOutput;
+  
+  float onTime = (effectivePidOutput / 100.0) * WINDOW_SIZE; // ms
   unsigned long windowElapsed = currentTime - windowStartTime;
   bool shouldBeOn = (windowElapsed <= onTime);
   
@@ -929,16 +952,18 @@ void loop() {
   
   // Update Teleplot with relay state and pin voltage verification
   static unsigned long lastRelayTeleplotTime = 0;
-  if (currentTime - lastRelayTeleplotTime > 500) { // Send every 0.5 seconds for relay
+  if (currentTime - lastRelayTeleplotTime > 1000) { // Send every 1 second for relay
     debugPrint(">relay_state:");
     debugPrintln(String(relayState ? 100.0 : 0.0));
     debugPrint(">relay_on_time_ms:");
     debugPrintln(String(onTime));
     debugPrint(">pid_output_percent:");
-    debugPrintln(String(pidOutput));
+    debugPrintln(String(effectivePidOutput));
     
-    debugPrint("Relay Control - PID: ");
+    debugPrint("Relay Control - Raw PID: ");
     debugPrint(String(pidOutput, 1));
+    debugPrint("%, Effective: ");
+    debugPrint(String(effectivePidOutput, 1));
     debugPrint("%, State: ");
     debugPrintln(relayState ? "ON" : "OFF");
     
@@ -1116,6 +1141,7 @@ void loop() {
  // lcd.print(relayState ? "ON" : "OFF");
 
   // Serial output
+  /*
   debugPrintln("-------------------");
   debugPrint("Thermocouple: "); debugPrint(String((int)round(tempThermocoupleF))); debugPrintln(" F");
   debugPrint("Thermistor 1: "); debugPrint(String((int)round(tempThermistor1F))); debugPrintln(" F");
@@ -1139,7 +1165,8 @@ void loop() {
   debugPrint("PID Output: "); debugPrint(String(pidOutput)); debugPrintln(" %");
   debugPrint("Rotary Encoder: "); debugPrintln(String(rotaryEncoder.readEncoder()));
   
-  // DEBUG: Show raw GPIO states every time we print status
+  // DEBUG: Show raw GPIO states every time we print status (COMMENTED OUT - was causing freeze)
+  /*
   bool pinA = digitalRead(ROTARY_ENCODER_A_PIN);
   bool pinB = digitalRead(ROTARY_ENCODER_B_PIN);  
   bool pinBtn = digitalRead(ROTARY_ENCODER_BUTTON_PIN);
@@ -1147,7 +1174,8 @@ void loop() {
   debugPrint(" B:"); debugPrint(pinB ? "H" : "L"); 
   debugPrint(" Btn:"); debugPrintln(pinBtn ? "H" : "L");
   debugPrint("Encoder Button Raw: "); debugPrintln(rotaryEncoder.isEncoderButtonDown() ? "Pressed" : "Not Pressed");
+  */
   debugPrint("Relay: "); debugPrintln(relayState ? "ON" : "OFF");
 
-  delay(300);
+  delay(50);
 }
