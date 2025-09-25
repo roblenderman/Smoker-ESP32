@@ -103,10 +103,10 @@ const float TEMP_STEP = 5.0; // °F increment
 bool updateLCD = false;
 
 // --- Meat temp prediction variables ---
-const int PREDICTION_WINDOW_MINUTES = 15;
-const int PREDICTION_INTERVAL_SECONDS = 60; // 1 minute
-float meatTempHistory[PREDICTION_WINDOW_MINUTES];
-unsigned long meatTempTimestamps[PREDICTION_WINDOW_MINUTES];
+const int PREDICTION_WINDOW_MINUTES = 5;  // Reduced from 15 to 5 minutes for faster ETA
+const int PREDICTION_INTERVAL_SECONDS = 30; // Reduced from 60 to 30 seconds for more frequent samples
+float meatTempHistory[5];  // Updated array size
+unsigned long meatTempTimestamps[5];  // Updated array size
 int meatTempHistoryIndex = 0;
 int meatTempHistoryCount = 0;
 unsigned long lastPredictionSampleTime = 0;
@@ -115,12 +115,12 @@ bool predictionValid = false;
 
 // PID parameters and variables
 double pidSetpoint, pidInput, pidOutput;
-double Kp = 11, Ki = 0.15, Kd = 35; // Tighter control: Ki↓ (0.15→0.12), Kd↑ (25→35) for reduced oscillation
+double Kp = 12, Ki = 0.18, Kd = 35; // Tighter control: Ki↓ (0.15→0.12), Kd↑ (25→35) for reduced oscillation
 ArduPID myPID; // Will be initialized in setup() with .begin() method
 
 // PID Control Configuration
 const unsigned long PID_TELEPLOT_INTERVAL_MS = 5000; // Send PID data every 5 seconds
-const float PID_OUTPUT_MIN = 25.0;   // Minimum PID output percentage
+const float PID_OUTPUT_MIN = 30.0;   // Minimum PID output percentage
 const float PID_OUTPUT_MAX = 100.0; // Maximum PID output percentage
 
 const float WINDOW_SIZE = 10000; // 5s window in ms (reduced for finer control)
@@ -133,6 +133,9 @@ const unsigned long REPEAT_DELAY = 200; // ms between adjustments
 //const unsigned long MODE_TIMEOUT = 5000; // 5s inactivity to exit meat temp mode
 const unsigned long MODE_ENTER_HOLD = 1000; // 1s hold to enter meat temp mode
 unsigned long lastButtonActivity = 0;
+
+// Global flag to track if we've switched to meat temperature hold mode
+bool meatTempHoldMode = false;
 bool meatTempMode = false;
 
 // Web server
@@ -289,6 +292,10 @@ void readAllTemperatures(float& thermocoupleF, float& thermistor1F, float& therm
   thermocoupleF = readThermocoupleTemperature();
   thermistor1F = readThermistorTemperature(THERMISTOR1_PIN, THERMISTOR_FIXED_RESISTOR_OHMS, THERMISTOR1_OFFSET_F);
   thermistor2F = readThermistorTemperature(THERMISTOR2_PIN, THERMISTOR2_FIXED_RESISTOR_OHMS, THERMISTOR2_OFFSET_F);
+  
+  // Clamp thermistor readings to minimum 32°F to prevent unrealistic low temperature readings
+  if (thermistor1F < 32.0) thermistor1F = 32.0;
+  if (thermistor2F < 32.0) thermistor2F = 32.0;
 }
 
 // PID Control Functions
@@ -315,7 +322,14 @@ float updatePID(float currentTemp, float setpoint) {
   pidInput = currentTemp;
   pidSetpoint = setpoint;
 
+  // Set PID output limits based on current operating mode
+  float minOutput = meatTempHoldMode ? 0.0 : PID_OUTPUT_MIN;
+  myPID.setOutputLimits(minOutput, PID_OUTPUT_MAX);
+
   myPID.compute(); // Calculate PID output based on error (setpoint - input)
+
+  // The PID output is already constrained by the library to the set limits
+  // No additional constraining needed
 
   debugPrint("PID Compute Result: ");
   debugPrintln(String(pidOutput));
@@ -335,6 +349,7 @@ void controlHeater(float pidOutput) {
 
   // Time-Proportional Relay Control
   // Converts PID output percentage to on/off timing within a fixed time window
+  // PID output is already constrained by the library based on current mode
   float effectivePidOutput = pidOutput;
 
   // Update display percentage to reflect PID output
@@ -369,9 +384,7 @@ void controlHeater(float pidOutput) {
     debugPrint(">pid_output_percent:");
     debugPrintln(String(effectivePidOutput));
 
-    debugPrint("Relay Control - Raw PID: ");
-    debugPrint(String(pidOutput, 1));
-    debugPrint("%, Effective: ");
+    debugPrint("Relay Control - PID Output: ");
     debugPrint(String(effectivePidOutput, 1));
     debugPrintln("%");
 
@@ -742,6 +755,14 @@ void loop() {
     if (!meatTempMode) {
       smokerTemp = currentEncoderValue;
       smokerTemp = constrain(smokerTemp, SMOKER_TEMP_MIN, SMOKER_TEMP_MAX);
+      
+      // If user is adjusting smoker temp back up (away from meat temp), reset PID limits to normal range
+      if (smokerTemp > meatDoneTemp + 5.0 && meatTempHoldMode) { // User set temp significantly higher than meat temp
+        myPID.setOutputLimits(PID_OUTPUT_MIN, PID_OUTPUT_MAX); // Reset to normal range (30% min)
+        debugPrintln("*** PID minimum output reset to 30% for normal smoking mode ***");
+        meatTempHoldMode = false; // Reset flag
+      }
+      
       debugPrint("New smoker temperature setpoint: ");
       debugPrintln(String(smokerTemp));
     } else {
@@ -884,8 +905,8 @@ void loop() {
   }
 
   // --- Meat temp prediction logic ---
-  // Use thermistor 1 as the primary meat probe
-  float currentMeatTemp = tempThermistor1F;
+  // Use average of both thermistors for more accurate ETA calculation
+  float currentMeatTemp = (tempThermistor1F + tempThermistor2F) / 2.0;
   if (currentTime - lastPredictionSampleTime > PREDICTION_INTERVAL_SECONDS * 1000UL) {
     meatTempHistory[meatTempHistoryIndex] = currentMeatTemp;
     meatTempTimestamps[meatTempHistoryIndex] = currentTime;
@@ -904,10 +925,10 @@ void loop() {
     unsigned long oldestTime = meatTempTimestamps[oldestIdx];
     float deltaTemp = currentMeatTemp - oldestTemp;
     float deltaTimeMin = (currentTime - oldestTime) / 60000.0;
-    if (deltaTemp > 0.1 && deltaTimeMin > 0.5) { // Require at least 0.1°F rise and 0.5 min window
+    if (deltaTemp > 0.05 && deltaTimeMin > 0.25) { // Reduced requirements: 0.05°F rise and 0.25 min window
       float rate = deltaTemp / deltaTimeMin; // degF per min
       float remaining = meatDoneTemp - currentMeatTemp;
-      if (rate > 0.01) { // Require at least 0.01°F/min
+      if (rate > 0.005) { // Reduced minimum rate to 0.005°F/min
         lastMeatTempPredictionMinutes = remaining / rate;
         predictionValid = true;
       }
@@ -924,7 +945,8 @@ void loop() {
     debugPrint("Meat Temp Logic - T1: "); debugPrint(String(tempThermistor1F, 1));
     debugPrint("°F (over target: "); debugPrint(String(diff1, 1)); debugPrint("°F), T2: ");
     debugPrint(String(tempThermistor2F, 1)); debugPrint("°F (over target: "); debugPrint(String(diff2, 1));
-    debugPrint("°F), Target: "); debugPrint(String(meatDoneTemp, 1)); debugPrintln("°F");
+    debugPrint("°F), Avg: "); debugPrint(String(currentMeatTemp, 1));
+    debugPrint("°F, Target: "); debugPrint(String(meatDoneTemp, 1)); debugPrintln("°F");
     if (predictionValid) {
       debugPrint("Estimated time to target: ");
       debugPrint(String(lastMeatTempPredictionMinutes, 1));
@@ -937,10 +959,12 @@ void loop() {
   
   // If both thermistors are at or above target (within 5°F below OR any amount above)
   if ((diff1 >= -5.0) && (diff2 >= -5.0)) {
-    static bool meatTempReached = false;
-    if (!meatTempReached) {
+    if (!meatTempHoldMode) {
       debugPrintln("*** MEAT TEMPERATURE REACHED! Setting smoker temp to meat temp ***");
-      meatTempReached = true;
+      meatTempHoldMode = true;
+      // Allow PID to go to 0% output when holding at meat temperature
+      myPID.setOutputLimits(0.0, PID_OUTPUT_MAX);
+      debugPrintln("*** PID minimum output changed to 0% for meat temperature hold ***");
     }
     smokerTemp = meatDoneTemp;
     pidSetpoint = smokerTemp; // Update PID setpoint immediately

@@ -1,3 +1,5 @@
+before making any changes always explain what you plan to do first.  
+make any proposed changes to the code and allow me to review before uploading
 when I give you instructions you should append my statements to a file named .github/my-instructions.md
 all of the wiring is working.  now we are trying to fine tune code to be more responsive to my needs.
 the smokeris designed to maintain the smokertemp as close as possible.
