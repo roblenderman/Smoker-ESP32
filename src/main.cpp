@@ -308,7 +308,7 @@ void initializePID() {
   myPID.begin(&pidInput, &pidOutput, &pidSetpoint, Kp, Ki, Kd);
   myPID.setOutputLimits(PID_OUTPUT_MIN, PID_OUTPUT_MAX); // PID output 0-100%
   myPID.setWindUpLimits(0, 60); // Prevent integral windup, limit to ±60% of output range
-  myPID.setSampleTime(1000); // 1 second sample time
+  myPID.setSampleTime(0); // Update every call for responsive control
   myPID.start(); // Start the PID controller
 }
 
@@ -355,9 +355,15 @@ void controlHeater(float pidOutput) {
   // Update display percentage to reflect PID output
   pidOutputPercent = effectivePidOutput;
 
-  float onTime = (effectivePidOutput / 100.0) * WINDOW_SIZE; // Calculate ON time in milliseconds
+  // Reset window timer when window period completes (do this first)
   unsigned long windowElapsed = currentTime - windowStartTime;
-  bool shouldBeOn = (windowElapsed <= onTime);
+  if (windowElapsed >= WINDOW_SIZE) {
+    windowStartTime = currentTime;
+    windowElapsed = 0; // Recalculate after reset
+  }
+
+  float onTime = (effectivePidOutput / 100.0) * WINDOW_SIZE; // Calculate ON time in milliseconds
+  bool shouldBeOn = (windowElapsed < onTime); // Use < to avoid off-on flicker at 100%
 
   static bool lastControlState = false;
 
@@ -391,10 +397,7 @@ void controlHeater(float pidOutput) {
     lastRelayTeleplotTime = currentTime;
   }
 
-  // Reset window timer when window period completes
-  if (windowElapsed >= WINDOW_SIZE) {
-    windowStartTime = currentTime;
-  }
+  // Window reset is now handled at the beginning of the function
 }
 
 /**
