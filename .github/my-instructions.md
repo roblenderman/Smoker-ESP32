@@ -89,3 +89,17 @@
 **DO NOT ADD SAFETY CHECKS!** User clarified: no fire danger, smoker capable of 400°F+, has used ArduPID successfully before without issues. Something wrong with our implementation - it worked two days ago. Need to find what changed in our code that broke ArduPID functionality, not add workarounds.
 
 **FIXED ARDUPID INITIALIZATION!** Found the issue - ArduPID was not properly initialized with constructor. Changed from uninitialized `ArduPID myPID;` to proper constructor. User corrected: do not use REVERSE logic - that's backwards. Need DIRECT logic for heating (lower temp = higher output).
+
+**Instruction:** explain if the setpoints or any other creations are reset of wifi connection is lost and reestablished
+
+**Context:** User needs to understand the impact of WiFi disconnection/reconnection on smoker control variables and state preservation.
+
+**Analysis Results:** 
+- **SETPOINTS ARE PRESERVED** - All critical variables (smokerTemp, meatDoneTemp, meatTempHoldMode, PID settings) are global variables in RAM, not affected by WiFi reconnection
+- **WiFi RECONNECTION IS NETWORKING ONLY** - The three-tier WiFi reconnection strategy (reconnect → disconnect/reconnect → full WiFi reset) only affects networking, not application variables
+- **CONTINUOUS OPERATION** - Temperature control, PID operation, and heater control continue during WiFi disconnection
+- **WEB INTERFACE TEMPORARILY UNAVAILABLE** - Only remote access (web UI, telnet) is interrupted during WiFi issues
+- **ESP32 DOESN'T REBOOT** - WiFi reconnection is just a network operation, doesn't clear RAM or restart the program
+- **LOCAL CONTROLS WORK** - Rotary encoder adjustments continue to function during WiFi disconnection
+
+**Confirmed:** No risk of losing setpoints or control state during WiFi network interruptions. The smoker maintains all settings and continues autonomous operation.
