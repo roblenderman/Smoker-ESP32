@@ -138,6 +138,22 @@ unsigned long lastButtonActivity = 0;
 bool meatTempHoldMode = false;
 bool meatTempMode = false;
 
+// Data logging system for web graphs
+struct DataPoint {
+  unsigned long timestamp;    // millis() when recorded
+  float smokerActualTemp;    // thermocouple reading
+  float smokerSetpointTemp;  // current smoker target
+  float meatTemp;           // average of both thermistors
+  float powerPercent;       // PID output percentage
+};
+
+// 10 hours at 5-second intervals = 7,200 data points
+#define MAX_DATA_POINTS 7200
+DataPoint dataBuffer[MAX_DATA_POINTS];
+int dataIndex = 0;
+int dataCount = 0;
+unsigned long lastDataLogTime = 0;
+
 // Web server
 AsyncWebServer server(80);
 
@@ -599,12 +615,13 @@ void setup() {
   // Setup web server
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
     String html = "<!DOCTYPE html><html>";
-    html += "<head><meta http-equiv='refresh' content='5'>";
+    html += "<head><meta http-equiv='refresh' content='30'>";  // Slower refresh for charts
     html += "<title>Smoker Control</title>";
+    html += "<script src='https://cdn.jsdelivr.net/npm/chart.js'></script>";
     html += "<style>";
-    html += "body { font-family: Arial; text-align: center; margin: 50px; background: #f7f7f7; }";
-    html += "h1 { color: #333; }";
-    html += "table { margin: 0 auto; border-collapse: collapse; background: #fff; box-shadow: 0 2px 8px #ccc; }";
+    html += "body { font-family: Arial; text-align: center; margin: 20px; background: #f7f7f7; }";
+    html += "h1 { color: #333; margin-bottom: 20px; }";
+    html += "table { margin: 0 auto 20px auto; border-collapse: collapse; background: #fff; box-shadow: 0 2px 8px #ccc; }";
     html += "th, td { padding: 12px 18px; border-bottom: 1px solid #eee; font-size: 1.1em; }";
     html += "th { background: #f0f0f0; }";
     html += "tr:last-child td { border-bottom: none; }";
@@ -614,6 +631,10 @@ void setup() {
     html += ".btn-plus:hover { background: #218838; }";
     html += ".btn-minus { background: #dc3545; color: white; border: 1px solid #bd2130; }";
     html += ".btn-minus:hover { background: #c82333; }";
+    html += ".chart-container { width: 90%; max-width: 800px; margin: 20px auto; background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 8px #ccc; }";
+    html += ".chart-controls { margin: 10px 0; }";
+    html += ".chart-controls button { margin: 0 5px; padding: 8px 16px; }";
+    html += "#tempChart { width: 100%; height: 400px; }";
     html += "</style></head>";
     html += "<body>";
     html += "<h1>Smoker Control</h1>";
@@ -629,12 +650,89 @@ void setup() {
     html += "<a href='/decrease_meat'><button class='btn-minus' title='Decrease Meat'>-5&deg;F</button></a>";
     html += "<a href='/increase_meat'><button class='btn-plus' title='Increase Meat'>+5&deg;F</button></a>";
     html += "</td></tr>";
-  html += "<tr><td>Meat 2</td><td>%T2_TEMP% &deg;F</td><td></td><td></td></tr>";
-  // ETA row for meat temp prediction
-  html += "<tr><td colspan='4' style='text-align:center;font-weight:bold;'>ETA to Meat Target: %MEAT_ETA%</td></tr>";
+    html += "<tr><td>Meat 2</td><td>%T2_TEMP% &deg;F</td><td></td><td></td></tr>";
+    // ETA row for meat temp prediction
+    html += "<tr><td colspan='4' style='text-align:center;font-weight:bold;'>ETA to Meat Target: %MEAT_ETA%</td></tr>";
     html += "<tr><td>Runtime</td><td colspan='3'>%UPTIME%</td></tr>";
     html += "<tr><td>Heater Power</td><td colspan='3'>%HEATER_POWER%</td></tr>";
     html += "</table>";
+    
+    // Add temperature chart section
+    html += "<div class='chart-container'>";
+    html += "<h2>Temperature History</h2>";
+    html += "<div class='chart-controls'>";
+    html += "<button onclick='updateChart(\"1h\")'>1 Hour</button>";
+    html += "<button onclick='updateChart(\"4h\")'>4 Hours</button>";
+    html += "<button onclick='updateChart(\"10h\")'>10 Hours</button>";
+    html += "<button onclick='updateChart(\"all\")'>All Data</button>";
+    html += "</div>";
+    html += "<canvas id='tempChart'></canvas>";
+    html += "</div>";
+    
+    html += "<script>";
+    html += "let chart; const ctx = document.getElementById('tempChart').getContext('2d');";
+    html += "function initChart() {";
+    html += "  chart = new Chart(ctx, {";
+    html += "    type: 'line',";
+    html += "    data: {";
+    html += "      labels: [],";
+    html += "      datasets: [{";
+    html += "        label: 'Smoker Temp',";
+    html += "        data: [],";
+    html += "        borderColor: 'rgb(255, 99, 132)',";
+    html += "        backgroundColor: 'rgba(255, 99, 132, 0.1)',";
+    html += "        tension: 0.1";
+    html += "      }, {";
+    html += "        label: 'Meat Temp',";
+    html += "        data: [],";
+    html += "        borderColor: 'rgb(54, 162, 235)',";
+    html += "        backgroundColor: 'rgba(54, 162, 235, 0.1)',";
+    html += "        tension: 0.1";
+    html += "      }, {";
+    html += "        label: 'Setpoint',";
+    html += "        data: [],";
+    html += "        borderColor: 'rgb(255, 205, 86)',";
+    html += "        backgroundColor: 'rgba(255, 205, 86, 0.1)',";
+    html += "        tension: 0.1";
+    html += "      }, {";
+    html += "        label: 'Power %',";
+    html += "        data: [],";
+    html += "        borderColor: 'rgb(75, 192, 192)',";
+    html += "        backgroundColor: 'rgba(75, 192, 192, 0.1)',";
+    html += "        tension: 0.1,";
+    html += "        yAxisID: 'y1'";
+    html += "      }]";
+    html += "    },";
+    html += "    options: {";
+    html += "      responsive: true,";
+    html += "      maintainAspectRatio: false,";
+    html += "      scales: {";
+    html += "        y: { type: 'linear', display: true, position: 'left', title: { display: true, text: 'Temperature (°F)' } },";
+    html += "        y1: { type: 'linear', display: true, position: 'right', title: { display: true, text: 'Power (%)' }, max: 100, min: 0,";
+    html += "              grid: { drawOnChartArea: false } }";
+    html += "      },";
+    html += "      plugins: { legend: { display: true } }";
+    html += "    }";
+    html += "  });";
+    html += "}";
+    html += "function updateChart(range) {";
+    html += "  fetch('/api/data?range=' + range)";
+    html += "    .then(response => response.json())";
+    html += "    .then(data => {";
+    html += "      const labels = data.data.map(d => new Date(d.timestamp).toLocaleTimeString());";
+    html += "      chart.data.labels = labels;";
+    html += "      chart.data.datasets[0].data = data.data.map(d => d.smokerActualTemp);";
+    html += "      chart.data.datasets[1].data = data.data.map(d => d.meatTemp);";
+    html += "      chart.data.datasets[2].data = data.data.map(d => d.smokerSetpointTemp);";
+    html += "      chart.data.datasets[3].data = data.data.map(d => d.powerPercent);";
+    html += "      chart.update();";
+    html += "    })";
+    html += "    .catch(err => console.error('Chart update failed:', err));";
+    html += "}";
+    html += "initChart();";
+    html += "updateChart('4h');"; // Default to 4 hour view
+    html += "setInterval(() => updateChart('current'), 30000);"; // Auto-refresh every 30 seconds
+    html += "</script>";
     html += "</body></html>";
 
     // Replace placeholders with filtered readings
@@ -697,6 +795,92 @@ void setup() {
       meatDoneTemp = SMOKER_TEMP_MIN;
     }
     request->redirect("/");
+  });
+
+  // JSON API for chart data
+  server.on("/api/data", HTTP_GET, [](AsyncWebServerRequest *request){
+    String range = "all";
+    if (request->hasParam("range")) {
+      range = request->getParam("range")->value();
+    }
+    
+    // Determine how many points to return based on range
+    int pointsToReturn = dataCount;
+    unsigned long cutoffTime = 0;
+    unsigned long currentMillis = millis();
+    
+    if (range == "1h") {
+      cutoffTime = currentMillis - (60 * 60 * 1000UL); // 1 hour ago
+    } else if (range == "4h") {
+      cutoffTime = currentMillis - (4 * 60 * 60 * 1000UL); // 4 hours ago
+    } else if (range == "10h") {
+      cutoffTime = currentMillis - (10 * 60 * 60 * 1000UL); // 10 hours ago
+    } else if (range == "current") {
+      cutoffTime = currentMillis - (4 * 60 * 60 * 1000UL); // Default to 4 hours for auto-refresh
+    }
+    
+    String json = "{\"data\":[";
+    bool firstPoint = true;
+    
+    // Iterate through circular buffer
+    for (int i = 0; i < dataCount; i++) {
+      int idx = dataCount < MAX_DATA_POINTS ? i : (dataIndex + i) % MAX_DATA_POINTS;
+      DataPoint& point = dataBuffer[idx];
+      
+      // Skip points older than cutoff time (except for "all")
+      if (range != "all" && point.timestamp < cutoffTime) {
+        continue;
+      }
+      
+      if (!firstPoint) json += ",";
+      json += "{";
+      json += "\"timestamp\":" + String(point.timestamp) + ",";
+      json += "\"smokerActualTemp\":" + String(point.smokerActualTemp, 1) + ",";
+      json += "\"smokerSetpointTemp\":" + String(point.smokerSetpointTemp, 1) + ",";
+      json += "\"meatTemp\":" + String(point.meatTemp, 1) + ",";
+      json += "\"powerPercent\":" + String(point.powerPercent, 1);
+      json += "}";
+      firstPoint = false;
+    }
+    
+    json += "],\"count\":" + String(dataCount) + ",\"range\":\"" + range + "\"}";
+    
+    // Set CORS headers for cross-origin requests
+    AsyncWebServerResponse *response = request->beginResponse(200, "application/json", json);
+    response->addHeader("Access-Control-Allow-Origin", "*");
+    request->send(response);
+  });
+
+  // Lightweight recent data endpoint for quick updates
+  server.on("/api/recent", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{\"data\":[";
+    bool firstPoint = true;
+    
+    // Return last 72 points (6 minutes at 5-second intervals)
+    int pointsToReturn = min(72, dataCount);
+    
+    for (int i = dataCount - pointsToReturn; i < dataCount; i++) {
+      int idx = dataCount < MAX_DATA_POINTS ? i : (dataIndex + i) % MAX_DATA_POINTS;
+      if (idx < 0) continue; // Skip invalid indices
+      
+      DataPoint& point = dataBuffer[idx];
+      
+      if (!firstPoint) json += ",";
+      json += "{";
+      json += "\"timestamp\":" + String(point.timestamp) + ",";
+      json += "\"smokerActualTemp\":" + String(point.smokerActualTemp, 1) + ",";
+      json += "\"smokerSetpointTemp\":" + String(point.smokerSetpointTemp, 1) + ",";
+      json += "\"meatTemp\":" + String(point.meatTemp, 1) + ",";
+      json += "\"powerPercent\":" + String(point.powerPercent, 1);
+      json += "}";
+      firstPoint = false;
+    }
+    
+    json += "]}";
+    
+    AsyncWebServerResponse *response = request->beginResponse(200, "application/json", json);
+    response->addHeader("Access-Control-Allow-Origin", "*");
+    request->send(response);
   });
 
   server.begin();
@@ -905,6 +1089,24 @@ void loop() {
     //debugPrintln(String(meatTempMode ? 1.0 : 0.0));  // 1 = meat mode, 0 = smoker mode
     
     lastTeleplotTime = currentTime;
+  }
+
+  // Data logging for web graphs every 5 seconds
+  if (currentTime - lastDataLogTime > 5000) {
+    DataPoint newPoint = {
+      currentTime,
+      tempThermocoupleF,
+      smokerTemp,
+      (tempThermistor1F + tempThermistor2F) / 2.0,
+      pidOutputPercent
+    };
+    
+    // Add to circular buffer
+    dataBuffer[dataIndex] = newPoint;
+    dataIndex = (dataIndex + 1) % MAX_DATA_POINTS;
+    if (dataCount < MAX_DATA_POINTS) dataCount++;
+    
+    lastDataLogTime = currentTime;
   }
 
   // --- Meat temp prediction logic ---
