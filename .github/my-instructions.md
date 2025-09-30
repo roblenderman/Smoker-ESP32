@@ -103,3 +103,12 @@
 - **LOCAL CONTROLS WORK** - Rotary encoder adjustments continue to function during WiFi disconnection
 
 **Confirmed:** No risk of losing setpoints or control state during WiFi network interruptions. The smoker maintains all settings and continues autonomous operation.
+
+**Instruction:** Do not make changes. Just suggest. Can we log reading for power, meat and another setting temp, smoker temp every minute and create graphs on the web page. use logging off these every 5 seconds and recycle after 10 hrs
+
+**Context:** User requests implementation of data logging with 5-second intervals and web-based graphing functionality. Key requirements:
+- Log power, meat temp, smoker setpoint temp, and smoker actual temp
+- Data collection every 5 seconds 
+- Data recycling after 10 hours (36,000 data points)
+- Display graphs on web page
+- User explicitly asked for suggestions only, no code changes yet
