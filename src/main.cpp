@@ -26,6 +26,7 @@
 #include <movingAvg.h>  // Moving average library for filtering
 #include <ArduinoOTA.h> // Include ArduinoOTA library
 #include <ArduPID.h>    // Arduino PID library
+#include <ESPmDNS.h>    // For mDNS support
 
 // Wi-Fi credentials
 const char* ssid = "LHome";
@@ -147,8 +148,8 @@ struct DataPoint {
   float powerPercent;       // PID output percentage
 };
 
-// 10 hours at 5-second intervals = 7,200 data points
-#define MAX_DATA_POINTS 7200
+// ~4 hours at 15-second intervals = 1,024 data points (reduced to fit in DRAM with mDNS)
+#define MAX_DATA_POINTS 1024
 DataPoint dataBuffer[MAX_DATA_POINTS];
 int dataIndex = 0;
 int dataCount = 0;
@@ -516,7 +517,13 @@ void setup() {
   IPAddress local_IP(192, 168, 1, 225);
   IPAddress gateway(192, 168, 1, 1);
   IPAddress subnet(255, 255, 255, 0);
-  WiFi.config(local_IP, gateway, subnet);
+  IPAddress primaryDNS(8, 8, 8, 8);    // Google DNS
+  IPAddress secondaryDNS(8, 8, 4, 4);  // Google DNS
+  
+  // Configure WiFi with DNS servers for proper mDNS operation
+  if (!WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS)) {
+    debugPrintln("Failed to configure static IP");
+  }
   
   WiFi.begin(ssid, password);
   debugPrint("Connecting to WiFi...");
@@ -542,6 +549,7 @@ void setup() {
     debugPrintln("\nConnected to WiFi");
     debugPrint("IP Address: ");
     debugPrintln(WiFi.localIP().toString());
+    
     debugPrint("Signal Strength: ");
     debugPrint(String(WiFi.RSSI()));
     debugPrintln(" dBm");
@@ -562,12 +570,12 @@ void setup() {
     debugPrintln(WiFi.macAddress());
     
     // Initialize OTA with standard ESP32 ArduinoOTA
-    ArduinoOTA.setHostname("esp32-smoker");
+    ArduinoOTA.setHostname("smoker");
     ArduinoOTA.setPort(3232);
     ArduinoOTA.begin();
     debugPrint("OTA Ready - Use IP address: ");
     debugPrintln(WiFi.localIP().toString());
-    debugPrint("OTA Hostname: esp32-smoker, ");
+    debugPrint("OTA Hostname: smoker, ");
     debugPrintln("OTA Port: 3232");
     
     // Start telnet server for wireless serial monitoring
@@ -631,10 +639,10 @@ void setup() {
     html += ".btn-plus:hover { background: #218838; }";
     html += ".btn-minus { background: #dc3545; color: white; border: 1px solid #bd2130; }";
     html += ".btn-minus:hover { background: #c82333; }";
-    html += ".chart-container { width: 90%; max-width: 800px; margin: 20px auto; background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 8px #ccc; }";
+    html += ".chart-container { width: 90%; max-width: 800px; height: 700px; margin: 20px auto; background: #fff; padding: 20px 20px 40px 20px; border-radius: 10px; box-shadow: 0 2px 8px #ccc; display: flex; flex-direction: column; }";
     html += ".chart-controls { margin: 10px 0; }";
     html += ".chart-controls button { margin: 0 5px; padding: 8px 16px; }";
-    html += "#tempChart { width: 100%; height: 400px; }";
+    html += "#tempChart { width: 100%; flex-grow: 1; min-height: 600px; display: block; }";
     html += "</style></head>";
     html += "<body>";
     html += "<h1>Smoker Control</h1>";
@@ -661,6 +669,7 @@ void setup() {
     html += "<div class='chart-container'>";
     html += "<h2>Temperature History</h2>";
     html += "<div class='chart-controls'>";
+    html += "<button onclick='updateChart(\"5m\")'>5 Min</button>";
     html += "<button onclick='updateChart(\"1h\")'>1 Hour</button>";
     html += "<button onclick='updateChart(\"4h\")'>4 Hours</button>";
     html += "<button onclick='updateChart(\"10h\")'>10 Hours</button>";
@@ -669,9 +678,54 @@ void setup() {
     html += "<canvas id='tempChart'></canvas>";
     html += "</div>";
     
+    html += "<script src='https://cdn.jsdelivr.net/npm/chart.js@4.4.0'></script>";
     html += "<script>";
-    html += "let chart; const ctx = document.getElementById('tempChart').getContext('2d');";
+    html += "window.chart = null;"; // Make chart globally available
+    html += "window.formatElapsedTime = function(ms) {";
+    html += "    const hours = Math.floor(ms / 3600000);";
+    html += "    const minutes = Math.floor((ms % 3600000) / 60000);";
+    html += "    const seconds = Math.floor((ms % 60000) / 1000);";
+    html += "    return hours + ':' + minutes.toString().padStart(2,'0') + ':' + seconds.toString().padStart(2,'0');";
+    html += "};";
+    html += "window.updateChart = async function(range) {"; // Define updateChart in global scope
+    html += "  try {";
+    html += "    console.log('Fetching data for range:', range);";
+    html += "    const response = await fetch('/api/data?range=' + range);";
+    html += "    console.log('Response status:', response.status);";
+    html += "    if (!response.ok) {";
+    html += "      console.error('Server returned error:', response.status);";
+    html += "      return false;";
+    html += "    }";
+    html += "    const data = await response.json();";
+    html += "    console.log('Data received:', data);";
+    html += "    if (data && data.data && Array.isArray(data.data) && data.data.length > 0) {";
+    html += "      const labels = data.data.map(d => formatElapsedTime(d.timestamp));";
+    html += "      chart.data.labels = labels;";
+    html += "      chart.data.datasets[0].data = data.data.map(d => d.smokerActualTemp);";
+    html += "      chart.data.datasets[1].data = data.data.map(d => d.meatTemp);";
+    html += "      chart.data.datasets[2].data = data.data.map(d => d.smokerSetpointTemp);";
+    html += "      chart.data.datasets[3].data = data.data.map(d => d.powerPercent);";
+    html += "      await chart.update('none');";
+    html += "      return true;";
+    html += "    }";
+    html += "  } catch (err) {";
+    html += "    console.error('Chart update failed:', err);";
+    html += "    return false;";
+    html += "  }";
+    html += "};";
     html += "function initChart() {";
+    html += "  console.log('Starting chart initialization');";
+    html += "  const canvas = document.getElementById('tempChart');";
+    html += "  if (!canvas) {";
+    html += "    console.error('Canvas element not found!');";
+    html += "    return;";
+    html += "  }";
+    html += "  const ctx = canvas.getContext('2d');";
+    html += "  if (!ctx) {";
+    html += "    console.error('Could not get 2d context!');";
+    html += "    return;";
+    html += "  }";
+    html += "  console.log('Context acquired, creating chart');";
     html += "  chart = new Chart(ctx, {";
     html += "    type: 'line',";
     html += "    data: {";
@@ -680,58 +734,145 @@ void setup() {
     html += "        label: 'Smoker Temp',";
     html += "        data: [],";
     html += "        borderColor: 'rgb(255, 99, 132)',";
-    html += "        backgroundColor: 'rgba(255, 99, 132, 0.1)',";
+    html += "        backgroundColor: 'white',";
+    html += "        borderWidth: 2,";
+    html += "        fill: false,";
+    html += "        pointRadius: 3,";
+    html += "        pointBackgroundColor: 'rgb(255, 99, 132)',";
     html += "        tension: 0.1";
     html += "      }, {";
     html += "        label: 'Meat Temp',";
     html += "        data: [],";
     html += "        borderColor: 'rgb(54, 162, 235)',";
-    html += "        backgroundColor: 'rgba(54, 162, 235, 0.1)',";
-    html += "        tension: 0.1";
+    html += "        backgroundColor: 'white',";
+    html += "        borderWidth: 2,";
+    html += "        fill: false,";
+    html += "        pointRadius: 3,";
+    html += "        pointBackgroundColor: 'rgb(54, 162, 235)',";
+    html += "        tension: 0.1,";
+    html += "        yAxisID: 'y1'";
     html += "      }, {";
     html += "        label: 'Setpoint',";
     html += "        data: [],";
     html += "        borderColor: 'rgb(255, 205, 86)',";
-    html += "        backgroundColor: 'rgba(255, 205, 86, 0.1)',";
+    html += "        backgroundColor: 'white',";
+    html += "        borderWidth: 2,";
+    html += "        fill: false,";
+    html += "        pointRadius: 3,";
+    html += "        pointBackgroundColor: 'rgb(255, 205, 86)',";
     html += "        tension: 0.1";
     html += "      }, {";
     html += "        label: 'Power %',";
     html += "        data: [],";
     html += "        borderColor: 'rgb(75, 192, 192)',";
-    html += "        backgroundColor: 'rgba(75, 192, 192, 0.1)',";
+    html += "        backgroundColor: 'white',";
+    html += "        borderWidth: 2,";
+    html += "        fill: false,";
+    html += "        pointRadius: 3,";
+    html += "        pointBackgroundColor: 'rgb(75, 192, 192)',";
     html += "        tension: 0.1,";
-    html += "        yAxisID: 'y1'";
+    html += "        yAxisID: 'y2'";
     html += "      }]";
     html += "    },";
     html += "    options: {";
     html += "      responsive: true,";
     html += "      maintainAspectRatio: false,";
-    html += "      scales: {";
-    html += "        y: { type: 'linear', display: true, position: 'left', title: { display: true, text: 'Temperature (°F)' } },";
-    html += "        y1: { type: 'linear', display: true, position: 'right', title: { display: true, text: 'Power (%)' }, max: 100, min: 0,";
-    html += "              grid: { drawOnChartArea: false } }";
+    html += "      layout: {";
+    html += "        padding: {";
+    html += "          top: 20,";
+    html += "          right: 20,";
+    html += "          bottom: 20,";
+    html += "          left: 20";
+    html += "        }";
     html += "      },";
-    html += "      plugins: { legend: { display: true } }";
+    html += "      scales: {";
+    html += "        y: {";
+    html += "          type: 'linear',";
+    html += "          display: true,";
+    html += "          position: 'left',";
+    html += "          title: { display: true, text: 'Temperature (°F)', color: 'rgb(255, 99, 132)' },";
+    html += "          min: 100,";  // Minimum smoker temp range
+    html += "          max: 375,";  // Maximum smoker temp range
+    html += "          grid: { drawBorder: false },";
+    html += "          ticks: { padding: 10, color: 'rgb(255, 99, 132)' },"; // Red ticks for smoker temp
+    html += "          border: { color: 'rgb(255, 99, 132)' }"; // Red axis line
+    html += "        },";
+    html += "        y1: {";
+    html += "          type: 'linear',";
+    html += "          display: true,";
+    html += "          position: 'right',";
+    html += "          title: { display: true, text: 'Meat Temp (°F)', color: 'rgb(54, 162, 235)' },";
+    html += "          min: 30,";  // Cold meat starts ~34°F
+    html += "          max: 220,";  // Max meat temp range
+    html += "          grid: { drawOnChartArea: false },";
+    html += "          ticks: { padding: 10, color: 'rgb(54, 162, 235)' },"; // Blue ticks for meat temp
+    html += "          border: { color: 'rgb(54, 162, 235)' }"; // Blue axis line
+    html += "        },";
+    html += "        y2: {";
+    html += "          type: 'linear',";
+    html += "          display: true,";
+    html += "          position: 'right',";
+    html += "          title: { display: true, text: 'Power (%)', color: 'rgb(75, 192, 192)' },";
+    html += "          min: 0,";
+    html += "          max: 100,";
+    html += "          grid: { drawOnChartArea: false },";
+    html += "          ticks: { padding: 10, color: 'rgb(75, 192, 192)' },"; // Green ticks for power
+    html += "          border: { color: 'rgb(75, 192, 192)' }"; // Green axis line
+    html += "        }";
+    html += "      },";
+    html += "      plugins: {";
+    html += "        legend: { display: true },";
+    html += "        tooltip: {";
+    html += "          mode: 'index',";
+    html += "          intersect: false,";
+    html += "          callbacks: {";
+    html += "            label: function(context) {";
+    html += "              let label = context.dataset.label || '';";
+    html += "              if (label) {";
+    html += "                label += ': ';";
+    html += "              }";
+    html += "              if (context.parsed.y !== null) {";
+    html += "                if (label.includes('Setpoint')) {";
+    html += "                  label += context.parsed.y.toFixed(1) + '°F';";
+    html += "                } else if (label.includes('Temp')) {";
+    html += "                  label += context.parsed.y.toFixed(1) + '°F';";
+    html += "                } else if (label.includes('Power')) {";
+    html += "                  label += context.parsed.y.toFixed(0) + '%';";
+    html += "                }";
+    html += "              }";
+    html += "              return label;";
+    html += "            }";
+    html += "          }";
+    html += "        }";
+    html += "      }";
     html += "    }";
     html += "  });";
     html += "}";
-    html += "function updateChart(range) {";
-    html += "  fetch('/api/data?range=' + range)";
-    html += "    .then(response => response.json())";
-    html += "    .then(data => {";
-    html += "      const labels = data.data.map(d => new Date(d.timestamp).toLocaleTimeString());";
-    html += "      chart.data.labels = labels;";
-    html += "      chart.data.datasets[0].data = data.data.map(d => d.smokerActualTemp);";
-    html += "      chart.data.datasets[1].data = data.data.map(d => d.meatTemp);";
-    html += "      chart.data.datasets[2].data = data.data.map(d => d.smokerSetpointTemp);";
-    html += "      chart.data.datasets[3].data = data.data.map(d => d.powerPercent);";
-    html += "      chart.update();";
-    html += "    })";
-    html += "    .catch(err => console.error('Chart update failed:', err));";
-    html += "}";
-    html += "initChart();";
-    html += "updateChart('4h');"; // Default to 4 hour view
-    html += "setInterval(() => updateChart('current'), 30000);"; // Auto-refresh every 30 seconds
+    html += "function formatElapsedTime(ms) {";
+    html += "    const hours = Math.floor(ms / 3600000);";
+    html += "    const minutes = Math.floor((ms % 3600000) / 60000);";
+    html += "    const seconds = Math.floor((ms % 60000) / 1000);";
+    html += "    return hours + ':' + minutes.toString().padStart(2,'0') + ':' + seconds.toString().padStart(2,'0');";
+    html += "  }";
+    // updateChart function is now defined in the global scope above
+    html += "document.addEventListener('DOMContentLoaded', async () => {";
+    html += "  try {";
+    html += "    initChart();";
+    html += "    console.log('Chart initialized');";
+    html += "    const success = await updateChart('current');"; // Load initial data
+    html += "    console.log('Initial data load success:', success);";
+    html += "    if (!success) {";
+    html += "      console.log('Retrying with all data...');";
+    html += "      await updateChart('all');";
+    html += "    }";
+    html += "    setInterval(async () => {";
+    html += "      const success = await updateChart('current');";
+    html += "      if (!success) await updateChart('all');";
+    html += "    }, 30000);";
+    html += "  } catch (err) {";
+    html += "    console.error('Chart initialization failed:', err);";
+    html += "  }";
+    html += "});";
     html += "</script>";
     html += "</body></html>";
 
@@ -809,18 +950,28 @@ void setup() {
     unsigned long cutoffTime = 0;
     unsigned long currentMillis = millis();
     
-    if (range == "1h") {
+    if (range == "5m") {
+      cutoffTime = currentMillis - (5 * 60 * 1000UL); // 5 minutes ago
+    } else if (range == "1h") {
       cutoffTime = currentMillis - (60 * 60 * 1000UL); // 1 hour ago
     } else if (range == "4h") {
       cutoffTime = currentMillis - (4 * 60 * 60 * 1000UL); // 4 hours ago
     } else if (range == "10h") {
       cutoffTime = currentMillis - (10 * 60 * 60 * 1000UL); // 10 hours ago
     } else if (range == "current") {
-      cutoffTime = currentMillis - (4 * 60 * 60 * 1000UL); // Default to 4 hours for auto-refresh
+      // For current view, return at least the last hour of data, or all data if less than an hour
+      cutoffTime = currentMillis - (60 * 60 * 1000UL); // 1 hour for current view
+    }
+
+    // Ensure we have some data to return
+    if (dataCount == 0) {
+      request->send(200, "application/json", "{\"data\":[],\"count\":0,\"range\":\"" + range + "\"}");
+      return;
     }
     
     String json = "{\"data\":[";
     bool firstPoint = true;
+    int validPoints = 0;
     
     // Iterate through circular buffer
     for (int i = 0; i < dataCount; i++) {
@@ -891,7 +1042,8 @@ void setup() {
 }
 
 void loop() {
-  ArduinoOTA.handle();  // Handle OTA updates
+  // Handle OTA updates
+  ArduinoOTA.handle();
   
   // Handle telnet connections for wireless serial monitoring
   if (telnetServer.hasClient()) {
@@ -1097,7 +1249,7 @@ void loop() {
       currentTime,
       tempThermocoupleF,
       smokerTemp,
-      (tempThermistor1F + tempThermistor2F) / 2.0,
+      (tempThermistor1F + tempThermistor2F) / 2.0f,  // Use float literal to avoid double conversion
       pidOutputPercent
     };
     
