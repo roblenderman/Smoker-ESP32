@@ -959,9 +959,9 @@ void loop() {
     }
     lastMeatDebugTime = currentTime;
   }
-  
-  // If both thermistors are at or above target (within 5°F below OR any amount above)
-  if ((diff1 >= -5.0) && (diff2 >= -5.0)) {
+
+  // If both thermistors are at or above target (within 10°F below OR any amount above)
+  if ((diff1 >= -10.0) && (diff2 >= -10.0)) {
     if (!meatTempHoldMode) {
       debugPrintln("*** MEAT TEMPERATURE REACHED! Setting smoker temp to meat temp ***");
       meatTempHoldMode = true;
