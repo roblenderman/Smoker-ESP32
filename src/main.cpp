@@ -117,7 +117,7 @@ bool predictionValid = false;
 
 // PID parameters and variables
 double pidSetpoint, pidInput, pidOutput;
-double Kp = 12, Ki = 0.18, Kd = 35; // Tighter control: Ki↓ (0.15→0.12), Kd↑ (25→35) for reduced oscillation
+double Kp = 13, Ki = 0.18, Kd = 35; // Tighter control: Ki↓ (0.15→0.12), Kd↑ (25→35) for reduced oscillation
 ArduPID myPID; // Will be initialized in setup() with .begin() method
 
 // PID Control Configuration
