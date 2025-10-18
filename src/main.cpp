@@ -98,6 +98,7 @@ float smokerTemp = 250.0; // °F, initial setpoint
 float meatDoneTemp = 170.0; // °F, initial meat done temp
 const float SMOKER_TEMP_MIN = 150.0; // °F
 const float SMOKER_TEMP_MAX = 350.0; // °F
+bool smokerEnabled = true; // Control flag for smoker on/off state
 const float TEMP_STEP = 5.0; // °F increment
 
 // LCD update flag
@@ -662,7 +663,14 @@ void setup() {
     // ETA row for meat temp prediction
     html += "<tr><td colspan='4' style='text-align:center;font-weight:bold;'>ETA to Meat Target: %MEAT_ETA%</td></tr>";
     html += "<tr><td>Runtime</td><td colspan='3'>%UPTIME%</td></tr>";
-    html += "<tr><td>Heater Power</td><td colspan='3'>%HEATER_POWER%</td></tr>";
+    html += "<tr><td>Heater Power</td><td>%HEATER_POWER%</td>";
+    if (smokerEnabled) {
+      html += "<td colspan='2'><a href='/smoker/off'><button style='background-color: #4CAF50; color: white;'>On</button></a> ";
+      html += "<a href='/smoker/off'><button style='background-color: #f44336; color: white;opacity:0.5;'>Off</button></a></td></tr>";
+    } else {
+      html += "<td colspan='2'><a href='/smoker/on'><button style='background-color: #4CAF50; color: white;opacity:0.5;'>On</button></a> ";
+      html += "<a href='/smoker/on'><button style='background-color: #f44336; color: white;'>Off</button></a></td></tr>";
+    }
     html += "</table>";
     
     // Add temperature chart section
@@ -935,6 +943,17 @@ void setup() {
     if (meatDoneTemp < SMOKER_TEMP_MIN) {
       meatDoneTemp = SMOKER_TEMP_MIN;
     }
+    request->redirect("/");
+  });
+
+  // Smoker on/off controls
+  server.on("/smoker/on", HTTP_GET, [](AsyncWebServerRequest *request){
+    smokerEnabled = true;
+    request->redirect("/");
+  });
+
+  server.on("/smoker/off", HTTP_GET, [](AsyncWebServerRequest *request){
+    smokerEnabled = false;
     request->redirect("/");
   });
 
@@ -1387,6 +1406,7 @@ void loop() {
   // Setpoint: Target smoker temperature (°F)
   // Output: Heater power percentage (0-100%)
   float pidOutput = updatePID(tempThermocoupleF, smokerTemp);
+  if (!smokerEnabled) pidOutput = 0;  // Force output to 0 when smoker is off
 
   // Control heater using time-proportional relay control
   controlHeater(pidOutput);
