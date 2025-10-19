@@ -1,0 +1,50 @@
+Connected to ESP32 Smoker Controller
+IP: 192.168.1.225
+PIN: 32 ADC: 3154
+PIN: 33 ADC: 3186
+>thermocouple:118.40
+>thermistor1:118.70
+>thermistor2:117.39
+>smoker_setpoint:110.00
+>meat_target:110.00
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+>pid_output:0.00
+Relay: OFF
+PIN: 32 ADC: 3168
+PIN: 33 ADC: 3194
+PID Compute Result: 0.00
+Relay: OFF
+PIN: 32 ADC: 3179
+PIN: 33 ADC: 3200
+>thermocouple:118.40
+>thermistor1:118.64
+>thermistor2:117.12
+>smoker_setpoint:110.00
+>meat_target:110.00
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+Relay: OFF
+PIN: 32 ADC: 3171
+PIN: 33 ADC: 3195
+PID Compute Result: 0.00
+Relay: OFF
+PIN: 32 ADC: 3171
+PIN: 33 ADC: 3181
+>thermocouple:118.40
+>thermistor1:118.64
+>thermistor2:117.05
+>smoker_setpoint:110.00
+>meat_target:110.00
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+Relay: OFF

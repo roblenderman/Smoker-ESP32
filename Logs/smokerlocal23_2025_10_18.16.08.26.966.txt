@@ -1,0 +1,40 @@
+Connected to ESP32 Smoker Controller
+IP: 192.168.1.225
+PIN: 32 ADC: 1390
+PIN: 33 ADC: 1411
+PID Compute Result: 31.20
+Relay: OFF
+PIN: 32 ADC: 1402
+PIN: 33 ADC: 1420
+>thermocouple:197.60
+>thermistor1:231.28
+>thermistor2:230.82
+>smoker_setpoint:200.00
+>meat_target:200.00
+PID Compute Result: 31.20
+>relay_state:0.00
+>relay_on_time_ms:3119.99
+>pid_output_percent:31.20
+Relay Control - PID Output: 31.2%
+Relay: OFF
+PIN: 32 ADC: 1413
+PIN: 33 ADC: 1407
+PID Compute Result: 31.20
+HEATER: Turning ON (relay pin HIGH)
+Relay: ON
+PIN: 32 ADC: 1400
+PIN: 33 ADC: 1420
+>thermocouple:197.60
+>thermistor1:231.36
+>thermistor2:230.90
+>smoker_setpoint:200.00
+>meat_target:200.00
+Meat Temp Logic - T1: 231.4°F (over target: 31.4°F), T2: 230.9°F (over target: 30.9°F), Avg: 231.1°F, Target: 200.0°F
+Estimated time to target: --
+PID Compute Result: 31.20
+>relay_state:100.00
+>relay_on_time_ms:3119.99
+>pid_output_percent:31.20
+Relay Control - PID Output: 31.2%
+>pid_output:31.20
+Relay: ON

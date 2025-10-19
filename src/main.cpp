@@ -46,8 +46,8 @@ MAX6675 thermocouple(thermoCLK, thermoCS, thermoDO);
 const float THERMOCOUPLE_OFFSET_F = 0.0; // °F offset to subtract (reads 7°F high)
 
 // Thermistor calibration offsets (adjust these based on your calibration tests)
-const float THERMISTOR1_OFFSET_F = 4.0; // °F offset for thermistor 1 (adjust as needed)
-const float THERMISTOR2_OFFSET_F = 4.0; // °F offset for thermistor 2 (adjust as needed)
+const float THERMISTOR1_OFFSET_F = 0.0; // °F offset for thermistor 1 (adjust as needed)
+const float THERMISTOR2_OFFSET_F = 0.0; // °F offset for thermistor 2 (adjust as needed)
 
 // ADC Configuration
 const int ADC_MAX_VALUE = 4095; // 12-bit ADC maximum value
@@ -68,7 +68,7 @@ const int relayPin = 16;
 const int THERMISTOR1_PIN = 32; // ADC1
 const float THERMISTOR_FIXED_RESISTOR_OHMS = 12400.0; // 12.4kΩ
 const float ADC_REFERENCE_VOLTAGE = 3.25; // 3.3V
-const float THERMISTOR_NOMINAL_RESISTANCE = 107000.0; // 107kΩ at 25°C
+const float THERMISTOR_NOMINAL_RESISTANCE = 110000.0; // 107kΩ at 25°C
 const float THERMISTOR_BETA_COEFFICIENT = 3950.0; // Adjust if known
 
 // Voltage Divider (Thermistor 2)
@@ -96,7 +96,7 @@ void IRAM_ATTR readEncoderISR() {
 // Smoker and meat setpoints
 float smokerTemp = 250.0; // °F, initial setpoint
 float meatDoneTemp = 170.0; // °F, initial meat done temp
-const float SMOKER_TEMP_MIN = 150.0; // °F
+const float SMOKER_TEMP_MIN = 100.0; // °F
 const float SMOKER_TEMP_MAX = 350.0; // °F
 bool smokerEnabled = true; // Control flag for smoker on/off state
 const float TEMP_STEP = 5.0; // °F increment
@@ -276,11 +276,12 @@ float readThermistorTemperature(int pin, float fixedResistorOhms, float offsetF)
   // Take multiple ADC samples for stability
   int rawSum = 0;
   for (int i = 0; i < THERMISTOR_SAMPLES; i++) {
-    rawSum += analogRead(pin);
-    //debugPrintln("PIN: " + String(pin) + " ADC: " + String(analogRead(pin)));
+    rawSum += analogRead(pin) * 1.12;
+   // debugPrintln("PIN: " + String(pin) + " ADC: " + String(analogRead(pin)));
     delay(THERMISTOR_SAMPLE_DELAY_MS);
   }
   int rawAverage = rawSum / THERMISTOR_SAMPLES;
+  debugPrintln("PIN: " + String(pin) + " ADC: " + String(rawAverage));
 
   // Apply moving average filter
   int filteredRaw = (pin == THERMISTOR1_PIN) ?

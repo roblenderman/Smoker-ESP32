@@ -1,0 +1,239 @@
+Connected to ESP32 Smoker Controller
+IP: 192.168.1.225
+>thermocouple:176.00
+>thermistor1:204.80
+>thermistor2:203.18
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+Relay: OFF
+Meat Temp Logic - T1: 204.6°F (over target: 34.6°F), T2: 203.0°F (over target: 33.0°F), Avg: 203.8°F, Target: 170.0°F
+Estimated time to target: --
+PID Compute Result: 0.00
+>pid_output:0.00
+Relay: OFF
+>thermocouple:176.00
+>thermistor1:204.48
+>thermistor2:203.05
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+Relay: OFF
+PID Compute Result: 0.00
+Relay: OFF
+>thermocouple:176.00
+>thermistor1:204.48
+>thermistor2:203.25
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+Relay: OFF
+PID Compute Result: 0.00
+Relay: OFF
+>thermocouple:176.00
+>thermistor1:204.67
+>thermistor2:203.12
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+Relay: OFF
+PID Compute Result: 0.00
+Relay: OFF
+>thermocouple:176.00
+>thermistor1:204.74
+>thermistor2:203.12
+>smoker_setpoint:170.00
+>meat_target:170.00
+Meat Temp Logic - T1: 204.7°F (over target: 34.7°F), T2: 203.1°F (over target: 33.1°F), Avg: 203.9°F, Target: 170.0°F
+Estimated time to target: --
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+>pid_output:0.00
+Relay: OFF
+PID Compute Result: 0.00
+Relay: OFF
+>thermocouple:176.00
+>thermistor1:204.80
+>thermistor2:202.66
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+Relay: OFF
+PID Compute Result: 0.00
+Relay: OFF
+>thermocouple:176.00
+>thermistor1:204.80
+>thermistor2:202.73
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+Relay: OFF
+PID Compute Result: 0.00
+Relay: OFF
+>thermocouple:176.00
+>thermistor1:204.87
+>thermistor2:202.47
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+Relay: OFF
+Meat Temp Logic - T1: 204.7°F (over target: 34.7°F), T2: 202.5°F (over target: 32.5°F), Avg: 203.6°F, Target: 170.0°F
+Estimated time to target: --
+PID Compute Result: 0.00
+>pid_output:0.00
+Relay: OFF
+>thermocouple:176.00
+>thermistor1:204.54
+>thermistor2:202.47
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+Relay: OFF
+PID Compute Result: 0.00
+Relay: OFF
+>thermocouple:176.00
+>thermistor1:204.28
+>thermistor2:202.34
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+Relay: OFF
+PID Compute Result: 0.00
+Relay: OFF
+>thermocouple:176.00
+>thermistor1:204.02
+>thermistor2:201.83
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+Relay: OFF
+PID Compute Result: 0.00
+Relay: OFF
+>thermocouple:176.00
+>thermistor1:203.70
+>thermistor2:201.51
+>smoker_setpoint:170.00
+>meat_target:170.00
+Meat Temp Logic - T1: 203.7°F (over target: 33.7°F), T2: 201.5°F (over target: 31.5°F), Avg: 202.6°F, Target: 170.0°F
+Estimated time to target: --
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+>pid_output:0.00
+Relay: OFF
+PID Compute Result: 0.00
+Relay: OFF
+>thermocouple:176.00
+>thermistor1:203.50
+>thermistor2:201.57
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+Relay: OFF
+PID Compute Result: 0.00
+Relay: OFF
+>thermocouple:176.00
+>thermistor1:203.50
+>thermistor2:201.57
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+Relay: OFF
+PID Compute Result: 0.00
+Relay: OFF
+>thermocouple:176.00
+>thermistor1:203.44
+>thermistor2:202.34
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+Relay: OFF
+Meat Temp Logic - T1: 203.7°F (over target: 33.7°F), T2: 202.3°F (over target: 32.3°F), Avg: 203.0°F, Target: 170.0°F
+Estimated time to target: --
+PID Compute Result: 0.00
+>pid_output:0.00
+Relay: OFF
+Telnet test - 362263ms uptime
+WiFi Signal: -60 dBm
+Free Heap: 190180 bytes
+>thermocouple:176.00
+>thermistor1:203.96
+>thermistor2:202.21
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+Relay: OFF
+PID Compute Result: 0.00
+Relay: OFF
+>thermocouple:176.00
+>thermistor1:203.89
+>thermistor2:202.09
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 0.00
+>relay_state:0.00
+>relay_on_time_ms:0.00
+>pid_output_percent:0.00
+Relay Control - PID Output: 0.0%
+Relay: OFF
