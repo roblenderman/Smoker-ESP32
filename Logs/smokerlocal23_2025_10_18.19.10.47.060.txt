@@ -1,0 +1,319 @@
+Connected to ESP32 Smoker Controller
+IP: 192.168.1.225
+PIN: 32 ADC: 4246
+PIN: 33 ADC: 4133
+Meat Temp Logic - T1: 3875.4°F (over target: 3705.4°F), T2: 3875.4°F (over target: 3705.4°F), Avg: 3875.4°F, Target: 170.0°F
+Estimated time to target: --
+PID Compute Result: 0.00
+HEATER: Turning OFF (relay pin LOW)
+>pid_output:0.00
+Relay: OFF
+PIN: 32 ADC: 4266
+PIN: 33 ADC: 4134
+>thermocouple:73.40
+>thermistor1:3875.35
+>thermistor2:3875.35
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 100.00
+HEATER: Turning ON (relay pin HIGH)
+>relay_state:100.00
+>relay_on_time_ms:10000.00
+>pid_output_percent:100.00
+Relay Control - PID Output: 100.0%
+Relay: ON
+PIN: 32 ADC: 4254
+PIN: 33 ADC: 4133
+PID Compute Result: 100.00
+Relay: ON
+PIN: 32 ADC: 4245
+PIN: 33 ADC: 4133
+>thermocouple:73.40
+>thermistor1:3875.35
+>thermistor2:3875.35
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 100.00
+>relay_state:100.00
+>relay_on_time_ms:10000.00
+>pid_output_percent:100.00
+Relay Control - PID Output: 100.0%
+Relay: ON
+PIN: 32 ADC: 4259
+PIN: 33 ADC: 4125
+PID Compute Result: 100.00
+Relay: ON
+PIN: 32 ADC: 4244
+PIN: 33 ADC: 4144
+>thermocouple:73.40
+>thermistor1:3875.35
+>thermistor2:3875.35
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 100.00
+>relay_state:100.00
+>relay_on_time_ms:10000.00
+>pid_output_percent:100.00
+Relay Control - PID Output: 100.0%
+Relay: ON
+PIN: 32 ADC: 4251
+PIN: 33 ADC: 4135
+PID Compute Result: 100.00
+Relay: ON
+PIN: 32 ADC: 4249
+PIN: 33 ADC: 4136
+>thermocouple:73.40
+>thermistor1:3875.35
+>thermistor2:3875.35
+>smoker_setpoint:170.00
+>meat_target:170.00
+Meat Temp Logic - T1: 3875.4°F (over target: 3705.4°F), T2: 3875.4°F (over target: 3705.4°F), Avg: 3875.4°F, Target: 170.0°F
+Estimated time to target: --
+PID Compute Result: 100.00
+>relay_state:100.00
+>relay_on_time_ms:10000.00
+>pid_output_percent:100.00
+Relay Control - PID Output: 100.0%
+>pid_output:100.00
+Relay: ON
+PIN: 32 ADC: 4261
+PIN: 33 ADC: 4140
+PID Compute Result: 100.00
+Relay: ON
+PIN: 32 ADC: 4245
+PIN: 33 ADC: 4128
+>thermocouple:73.40
+>thermistor1:3875.35
+>thermistor2:3875.35
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 100.00
+>relay_state:100.00
+>relay_on_time_ms:10000.00
+>pid_output_percent:100.00
+Relay Control - PID Output: 100.0%
+Relay: ON
+PIN: 32 ADC: 4236
+PIN: 33 ADC: 4137
+PID Compute Result: 100.00
+Relay: ON
+Telnet test - 60752ms uptime
+WiFi Signal: -52 dBm
+Free Heap: 190408 bytes
+PIN: 32 ADC: 4247
+PIN: 33 ADC: 4124
+T1 Temp: 3875.4°F | T2 Temp: 3875.4°F
+>thermocouple:73.40
+>thermistor1:3875.35
+>thermistor2:3875.35
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 100.00
+>relay_state:100.00
+>relay_on_time_ms:10000.00
+>pid_output_percent:100.00
+Relay Control - PID Output: 100.0%
+Relay: ON
+PIN: 32 ADC: 4242
+PIN: 33 ADC: 4136
+PID Compute Result: 100.00
+Relay: ON
+PIN: 32 ADC: 4257
+PIN: 33 ADC: 4133
+>thermocouple:73.40
+>thermistor1:3875.35
+>thermistor2:3875.35
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 100.00
+>relay_state:100.00
+>relay_on_time_ms:10000.00
+>pid_output_percent:100.00
+Relay Control - PID Output: 100.0%
+Relay: ON
+PIN: 32 ADC: 4241
+PIN: 33 ADC: 4134
+Meat Temp Logic - T1: 3875.4°F (over target: 3705.4°F), T2: 3875.4°F (over target: 3705.4°F), Avg: 3875.4°F, Target: 170.0°F
+Estimated time to target: --
+PID Compute Result: 100.00
+>pid_output:100.00
+Relay: ON
+PIN: 32 ADC: 4254
+PIN: 33 ADC: 4131
+>thermocouple:73.40
+>thermistor1:3875.35
+>thermistor2:3875.35
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 100.00
+>relay_state:100.00
+>relay_on_time_ms:10000.00
+>pid_output_percent:100.00
+Relay Control - PID Output: 100.0%
+Relay: ON
+PIN: 32 ADC: 4242
+PIN: 33 ADC: 4139
+PID Compute Result: 100.00
+Relay: ON
+PIN: 32 ADC: 4242
+PIN: 33 ADC: 4136
+>thermocouple:73.40
+>thermistor1:3875.35
+>thermistor2:3875.35
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 100.00
+>relay_state:100.00
+>relay_on_time_ms:10000.00
+>pid_output_percent:100.00
+Relay Control - PID Output: 100.0%
+Relay: ON
+PIN: 32 ADC: 4252
+PIN: 33 ADC: 4141
+PID Compute Result: 100.00
+Relay: ON
+PIN: 32 ADC: 4242
+PIN: 33 ADC: 4138
+>thermocouple:73.40
+>thermistor1:3875.35
+>thermistor2:3875.35
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 100.00
+>relay_state:100.00
+>relay_on_time_ms:10000.00
+>pid_output_percent:100.00
+Relay Control - PID Output: 100.0%
+Relay: ON
+PIN: 32 ADC: 4259
+PIN: 33 ADC: 4137
+PID Compute Result: 100.00
+Relay: ON
+PIN: 32 ADC: 4254
+PIN: 33 ADC: 4141
+PIN: 32 ADC: 4244
+PIN: 33 ADC: 4132
+>thermocouple:73.40
+>thermistor1:3875.35
+>thermistor2:3875.35
+>smoker_setpoint:170.00
+>meat_target:170.00
+Meat Temp Logic - T1: 3875.4°F (over target: 3705.4°F), T2: 3875.4°F (over target: 3705.4°F), Avg: 3875.4°F, Target: 170.0°F
+Estimated time to target: --
+PID Compute Result: 100.00
+>relay_state:100.00
+>relay_on_time_ms:10000.00
+>pid_output_percent:100.00
+Relay Control - PID Output: 100.0%
+>pid_output:100.00
+Relay: ON
+PIN: 32 ADC: 4242
+PIN: 33 ADC: 4144
+PID Compute Result: 100.00
+Relay: ON
+PIN: 32 ADC: 4240
+PIN: 33 ADC: 4138
+>thermocouple:73.40
+>thermistor1:3875.35
+>thermistor2:3875.35
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 100.00
+>relay_state:100.00
+>relay_on_time_ms:10000.00
+>pid_output_percent:100.00
+Relay Control - PID Output: 100.0%
+Relay: ON
+PIN: 32 ADC: 4248
+PIN: 33 ADC: 4148
+PID Compute Result: 100.00
+Relay: ON
+PIN: 32 ADC: 4249
+PIN: 33 ADC: 4139
+>thermocouple:73.40
+>thermistor1:3875.35
+>thermistor2:3875.35
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 100.00
+>relay_state:100.00
+>relay_on_time_ms:10000.00
+>pid_output_percent:100.00
+Relay Control - PID Output: 100.0%
+Relay: ON
+PIN: 32 ADC: 4254
+PIN: 33 ADC: 4154
+PID Compute Result: 100.00
+Relay: ON
+PIN: 32 ADC: 4242
+PIN: 33 ADC: 4145
+>thermocouple:73.40
+>thermistor1:3875.35
+>thermistor2:3875.35
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 100.00
+>relay_state:100.00
+>relay_on_time_ms:10000.00
+>pid_output_percent:100.00
+Relay Control - PID Output: 100.0%
+Relay: ON
+PIN: 32 ADC: 4232
+PIN: 33 ADC: 4150
+Meat Temp Logic - T1: 3875.4°F (over target: 3705.4°F), T2: 3875.4°F (over target: 3705.4°F), Avg: 3875.4°F, Target: 170.0°F
+Estimated time to target: --
+PID Compute Result: 100.00
+>pid_output:100.00
+Relay: ON
+PIN: 32 ADC: 4253
+PIN: 33 ADC: 4148
+>thermocouple:73.40
+>thermistor1:3875.35
+>thermistor2:3875.35
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 100.00
+>relay_state:100.00
+>relay_on_time_ms:10000.00
+>pid_output_percent:100.00
+Relay Control - PID Output: 100.0%
+Relay: ON
+PIN: 32 ADC: 4243
+PIN: 33 ADC: 4138
+PID Compute Result: 100.00
+Relay: ON
+PIN: 32 ADC: 4253
+PIN: 33 ADC: 4141
+>thermocouple:73.40
+>thermistor1:3875.35
+>thermistor2:3875.35
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 100.00
+>relay_state:100.00
+>relay_on_time_ms:10000.00
+>pid_output_percent:100.00
+Relay Control - PID Output: 100.0%
+Relay: ON
+PIN: 32 ADC: 4244
+PIN: 33 ADC: 4126
+PID Compute Result: 100.00
+Relay: ON
+PIN: 32 ADC: 4238
+PIN: 33 ADC: 4141
+>thermocouple:73.40
+>thermistor1:3875.35
+>thermistor2:3875.35
+>smoker_setpoint:170.00
+>meat_target:170.00
+PID Compute Result: 100.00
+>relay_state:100.00
+>relay_on_time_ms:10000.00
+>pid_output_percent:100.00
+Relay Control - PID Output: 100.0%
+Relay: ON
+PIN: 32 ADC: 4233
+PIN: 33 ADC: 4135
+PID Compute Result: 100.00
+Relay: ON
+PIN: 32 ADC: 4239

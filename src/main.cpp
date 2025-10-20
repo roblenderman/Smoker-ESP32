@@ -56,7 +56,7 @@ const int THERMISTOR_SAMPLE_DELAY_MS = 5; // Delay between samples
 
 // Thermocouple Configuration
 const int THERMOCOUPLE_SAMPLES = 2; // Number of thermocouple samples to average
-const int THERMOCOUPLE_SAMPLE_DELAY_MS = 250; // Delay between thermocouple samples
+const int THERMOCOUPLE_SAMPLE_DELAY_MS = 300; // Delay between thermocouple samples
 
 // I2C LCD (20x4)
 LiquidCrystal_I2C lcd(0x27, 20, 4); // I2C address 0x27, 20x4 LCD
@@ -66,14 +66,14 @@ const int relayPin = 16;
 
 // Voltage Divider (Thermistor 1)
 const int THERMISTOR1_PIN = 32; // ADC1
-const float THERMISTOR_FIXED_RESISTOR_OHMS = 12400.0; // 12.4kΩ
-const float ADC_REFERENCE_VOLTAGE = 3.25; // 3.3V
-const float THERMISTOR_NOMINAL_RESISTANCE = 110000.0; // 107kΩ at 25°C
-const float THERMISTOR_BETA_COEFFICIENT = 3950.0; // Adjust if known
+const float THERMISTOR_FIXED_RESISTOR_OHMS = 12340.0; // 12.4kΩ
+const float ADC_REFERENCE_VOLTAGE = 3.3; // 3.3V
+const float THERMISTOR_NOMINAL_RESISTANCE = 124500.0; // 107kΩ at 25°C
+const float THERMISTOR_BETA_COEFFICIENT = 3960.0; // Adjust if known
 
 // Voltage Divider (Thermistor 2)
 const int THERMISTOR2_PIN = 33; // ADC1
-const float THERMISTOR2_FIXED_RESISTOR_OHMS = 12400.0; // 12.4kΩ
+const float THERMISTOR2_FIXED_RESISTOR_OHMS = 12340.0; // 12.4kΩ
 
 // Moving average filters for temperature readings (smoothing)
 movingAvg thermistor1Filter(7);     // 10-sample moving average for thermistor 1
@@ -176,10 +176,10 @@ void resetPID();
 void sendPIDTelemetry();
 
 float calculateTemp(float r) {
-  float t25 = 298.15; // 25°C in Kelvin
+  float t25 = 292.04; // 25°C in Kelvin
   float tempK = 1.0 / ( (1.0 / t25) + (log(r / THERMISTOR_NOMINAL_RESISTANCE) / THERMISTOR_BETA_COEFFICIENT) );
   float tempC = tempK - 273.15; // °C
-  return tempC * 9.0 / 5.0 + 32.0; // °F
+  return (tempC - 0.07 * (tempC - 19.0)) * 9.0 / 5.0 + 32.0; // °F
 }
 
 String getUptime() {
@@ -276,13 +276,14 @@ float readThermistorTemperature(int pin, float fixedResistorOhms, float offsetF)
   // Take multiple ADC samples for stability
   int rawSum = 0;
   for (int i = 0; i < THERMISTOR_SAMPLES; i++) {
-    rawSum += analogRead(pin) * 1.12;
-   // debugPrintln("PIN: " + String(pin) + " ADC: " + String(analogRead(pin)));
+    rawSum += analogRead(pin); //possible multiplier needed here
+    //debugPrintln("PIN: " + String(pin) + " ADC: " + String(analogRead(pin)));
     delay(THERMISTOR_SAMPLE_DELAY_MS);
   }
   int rawAverage = rawSum / THERMISTOR_SAMPLES;
-  debugPrintln("PIN: " + String(pin) + " ADC: " + String(rawAverage));
+  debugPrintln("PIN: " + String(pin) + " rawsum: " + String(rawSum) + " ADC AVG: " + String(rawAverage));
 
+  
   // Apply moving average filter
   int filteredRaw = (pin == THERMISTOR1_PIN) ?
     thermistor1Filter.reading(rawAverage) :
@@ -476,6 +477,7 @@ void setup() {
   delay(100);
   
   // Initialize moving average filters for thermistors and thermocouple
+  analogReadResolution(12);  // Forces 12-bit output (default on original ESP32)
   thermistor1Filter.begin();
   thermistor2Filter.begin();
   thermocoupleFilter.begin();
