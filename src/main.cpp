@@ -94,8 +94,8 @@ void IRAM_ATTR readEncoderISR() {
 }
 
 // Smoker and meat setpoints
-float smokerTemp = 250.0; // °F, initial setpoint
-float meatDoneTemp = 170.0; // °F, initial meat done temp
+float smokerTemp = 275.0; // °F, initial setpoint
+float meatDoneTemp = 165.0; // °F, initial meat done temp
 const float SMOKER_TEMP_MIN = 100.0; // °F
 const float SMOKER_TEMP_MAX = 350.0; // °F
 bool smokerEnabled = true; // Control flag for smoker on/off state
@@ -783,7 +783,7 @@ void setup() {
     html += "<button onclick='updateChart(\"5m\")'>5 Min</button>";
     html += "<button onclick='updateChart(\"1h\")'>1 Hour</button>";
     html += "<button onclick='updateChart(\"4h\")'>4 Hours</button>";
-    html += "<button onclick='updateChart(\"10h\")'>10 Hours</button>";
+    //html += "<button onclick='updateChart(\"10h\")'>10 Hours</button>";
     html += "<button onclick='updateChart(\"all\")'>All Data</button>";
     html += "</div>";
     html += "<canvas id='tempChart'></canvas>";
@@ -1297,7 +1297,7 @@ void loop() {
   }
 
   // Data logging for web graphs every 5 seconds
-  if (currentTime - lastDataLogTime > 5000) {
+  if (currentTime - lastDataLogTime > 10000) {
     DataPoint newPoint = {
       currentTime,
       tempThermocoupleF,
@@ -1368,7 +1368,7 @@ void loop() {
   }
 
   // If both thermistors are at or above target (within 10°F below OR any amount above)
-  if ((diff1 >= -10.0) && (diff2 >= -10.0)) {
+  if ((diff1 >= -5.0) && (diff2 >= -5.0)) {
     if (!meatTempHoldMode) {
       debugPrintln("*** MEAT TEMPERATURE REACHED! Setting smoker temp to meat temp ***");
       meatTempHoldMode = true;
